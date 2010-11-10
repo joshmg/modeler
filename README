@@ -1,0 +1,10 @@
+Feel free to compile and run and distribute any code.
+(http://www.github.com/joshmg)
+
+README Last Updated: November 10, 2010
+
+All libraries compiled and linked with with MSVS 2010 "Microsoft (R) 32-bit C/C++ Optimizing Compiler Version 16.00.30319.01 for 80x86".
+
+This code has only been tested on a Windows environment.
+
+There is a known bugs that occurs when merging models that results in irrecoverable color data loss. This is thought to originate from from editing-model to model3d object translation.
