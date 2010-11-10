@@ -1,4 +1,4 @@
-Feel free to compile and run and distribute any code.
+Feel free to compile, run and distribute any code.
 (http://www.github.com/joshmg)
 
 README Last Updated: November 10, 2010
@@ -7,4 +7,4 @@ All libraries compiled and linked with with MSVS 2010 "Microsoft (R) 32-bit C/C+
 
 This code has only been tested on a Windows environment.
 
-There is a known bugs that occurs when merging models that results in irrecoverable color data loss. This is thought to originate from from editing-model to model3d object translation.
+There is a known bug that occurs when merging models which results in irrecoverable color data loss. This is thought to originate from from editing-model to model3d color-data translation.
