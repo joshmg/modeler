@@ -9,18 +9,44 @@
 #include <string>
 
 #include <GL/gl.h>
-#include <GL/glut.h>
-#include <GL/glu.h>
+
+const vect3f DEFAULT_COLOR(1.0f, 0.0f, 1.0f);
+
+struct facet {
+  int id;
+  vect3f color;
+
+  facet() {
+    id = -1;
+    color = DEFAULT_COLOR;
+  }
+  facet(int _id, const vect3f& _color) : id(_id), color(_color) { }
+};
+
+struct index2d {
+  int data[2];
+
+  index2d() { clear(); }
+  index2d(int a, int b) { data[0] = a; data[1] =  b; }
+  index2d(const int* const ab) { data[0] = ab[0]; data[1] =  ab[1]; }
+
+  void clear() { data[0] = -1; data[1] = -1; }
+
+  int& operator[](int i) { return data[i]; }
+  const int& operator[](int i) const { return data[i]; }
+  operator int* () { return data; }
+  operator const int* () const { return data; }
+
+};
 
 class model3d {
   private:
     inline static std::string SAVE_FILE_HEADER() { return std::string("model3d="); }
-    inline static vect3f DEFAULT_COLOR() { return vect3f(1.0f, 0.0f, 1.0f); }
 
     GLenum _draw_mode;
     std::vector<vect3f> _coordinates;
-    std::vector<std::vector<int>> _facets;
-    std::vector<std::vector<vect3f>> _facet_colors;
+    std::vector<std::vector<facet>> _facet_data;
+    int _vertex_count;
 
     std::vector<model3d> _sub_models;
 
@@ -35,19 +61,25 @@ class model3d {
 
   public:
     model3d();
-    model3d(const std::vector<vect3f>& coordinates, const std::vector<std::vector<int>>& facets, const std::vector<std::vector<vect3f>>* const colors = 0);
+    model3d(const std::vector<vect3f>& coordinates, const std::vector<std::vector<facet>>& facets);
+
+    void clear();
 
     std::vector<vect3f> get_coordinates() const;
-    std::vector<std::vector<int>> get_facets() const;
-    std::vector<std::vector<vect3f>> get_facet_colors() const;
+    const std::vector<vect3f>* const get_coordinates_ptr() const;
+    std::vector<std::vector<facet>> get_facet_data() const;
+    const std::vector<std::vector<facet>>* const get_facet_data_ptr() const;
     GLenum get_draw_mode() const;
 
     void set_draw_mode(GLenum);
-    void vertex_color(int* vertex_id, const vect3f& color);
-    void add_vertex(const vect3f& point, const vect3f& color=DEFAULT_COLOR());
-    void remove_vertex(int* vertex_id); // int vertex_id[2] (indexing into a two-dimensional array)
+    void set_vertex_color(int* vertex_id, const vect3f& color);
+    vect3f get_vertex_color(int* vertex_id) const;
+    index2d add_vertex(const vect3f& point, const vect3f& color=DEFAULT_COLOR);
+    void remove_vertex(const index2d& vertex_id); // int vertex_id[2] (indexing into a two-dimensional array)
     void push_face();
     void pop_face();
+
+    int vertex_count() const;
 
     void save(std::string& filename=std::string()) const; // produces filename if filename has zero length to the saved file name
     bool load(const std::string& filename);

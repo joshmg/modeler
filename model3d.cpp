@@ -11,10 +11,14 @@
 #include <GL/gl.h>
 #include <GL/glut.h>
 #include <GL/glu.h>
+
+#include <iostream>
 using namespace std;
 
 void model3d::_initialize() {
-  _facets.push_back(vector<int>());
+  _facet_data.push_back(vector<facet>());
+
+  _vertex_count = 0;
 
   _draw_mode = GL_POLYGON;
   _pos = vect3f(0.0f, 0.0f, 0.0f);
@@ -28,11 +32,14 @@ void model3d::_initialize() {
   _child_animate_flag = true;
 }
 
+// returns the index of the specified point if it exists within _coordinates.
+// if it does not exist, -1 is returned.
 int model3d::_get_facet_id(const vect3f& point) const {
   for (int i=0;i<_coordinates.size();i++) if (_coordinates[i] == point) return i;
   return -1;
 }
 
+// checks if the two dimensional array contains a valid set of indices within the specified two dimensional vector
 template <typename T> bool model3d::_in_bounds(const int* const indices, const vector<vector<T>>& vect) const {
   if (indices[0] < 0 || indices[1] < 0) return false;
   return (indices[0] < vect.size() && indices[1] < vect[indices[0]].size());
@@ -40,64 +47,78 @@ template <typename T> bool model3d::_in_bounds(const int* const indices, const v
 
 model3d::model3d() { _initialize(); }
 
-model3d::model3d(const vector<vect3f>& coordinates, const vector<vector<int>>& facets, const vector<vector<vect3f>>* const colors) {
+model3d::model3d(const vector<vect3f>& coordinates, const vector<vector<facet>>& facets) {
   _initialize();
 
   _coordinates = coordinates;
-  _facets = facets;
+  _facet_data = facets;
 
-  if (colors == 0) {
-    for (int i=0;i<_facets.size();i++) {
-      vector<vect3f> colors_list;
-      for (int j=0;j<_facets[i].size();j++) {
-        colors_list.push_back(DEFAULT_COLOR());
-      }
-      _facet_colors.push_back(colors_list);
-    }
+  for (int i=0;i<_facet_data.size();i++) {
+    _vertex_count += _facet_data[i].size();
   }
-  else _facet_colors = *colors;
+}
+
+void model3d::clear() { 
+  _coordinates.clear();
+  _facet_data.clear();
+
+  _sub_models.clear();
+
+  _initialize();
 }
 
 vector<vect3f> model3d::get_coordinates() const { return _coordinates; }
 
-vector<vector<int>> model3d::get_facets() const { return _facets; }
+const vector<vect3f>* const model3d::get_coordinates_ptr() const { return &_coordinates; }
 
-vector<vector<vect3f>> model3d::get_facet_colors() const { return _facet_colors; }
+vector<vector<facet>> model3d::get_facet_data() const { return _facet_data; }
+
+const vector<vector<facet>>* const model3d::get_facet_data_ptr() const { return &_facet_data; }
 
 GLenum model3d::get_draw_mode() const { return _draw_mode; }
 
 void model3d::set_draw_mode(GLenum draw_mode) { _draw_mode = draw_mode; }
 
-void model3d::vertex_color(int* vertex_id, const vect3f& color) {
-  if (_in_bounds(vertex_id, _facet_colors)) _facet_colors[vertex_id[0]][vertex_id[1]] = color;
+// sets a specific facet color (facet referenced by two dimensional indices)
+void model3d::set_vertex_color(int* vertex_id, const vect3f& color) {
+  if (_in_bounds(vertex_id, _facet_data)) _facet_data[vertex_id[0]][vertex_id[1]].color = color;
 }
 
-void model3d::add_vertex(const vect3f& point, const vect3f& color) {
+vect3f model3d::get_vertex_color(int* vertex_id) const {
+  if (_in_bounds(vertex_id, _facet_data)) return _facet_data[vertex_id[0]][vertex_id[1]].color;
+  return DEFAULT_COLOR;
+}
+
+// appends a vertex to the object's current face vector
+index2d model3d::add_vertex(const vect3f& point, const vect3f& color) {
   int facet_id(_get_facet_id(point));
   if (facet_id < 0) { // vertex doesn't exist yet
     facet_id = _coordinates.size();
     _coordinates.push_back(point);
   }
-  _facets.back().push_back(facet_id);
-  _facet_colors.back().push_back(color);
+  _facet_data.back().push_back(facet(facet_id, color));
+
+  _vertex_count++;
+
+  return index2d(_facet_data.size()-1, _facet_data.back().size()-1);
 }
 
-void model3d::remove_vertex(int* vertex_id) {
-  if (_in_bounds(vertex_id, _facets)) {
-    _facets[vertex_id[0]].erase(_facets[vertex_id[0]].begin()+vertex_id[1]);
-    _facet_colors[vertex_id[0]].erase(_facet_colors[vertex_id[0]].begin()+vertex_id[1]);
+void model3d::remove_vertex(const index2d& vertex_id) {
+  if (_in_bounds(vertex_id, _facet_data)) {
+    _facet_data[vertex_id[0]].erase(_facet_data[vertex_id[0]].begin()+vertex_id[1]);
   }
 }
 
 void model3d::push_face() {
-  _facets.push_back(vector<int>());
-  _facet_colors.push_back(vector<vect3f>());
+  if (_facet_data.back().size() > 0) _facet_data.push_back(vector<facet>()); // only add a face if the current face has a facet
 }
 
 void model3d::pop_face() {
-  _facets.pop_back();
-  _facet_colors.pop_back();
+  if (_facet_data.size() > 1) _facet_data.pop_back();
+  else if (_facet_data.size() == 1) _facet_data.back().clear();
 }
+
+int model3d::vertex_count() const { return _vertex_count; }
 
 void model3d::save(string& filename) const {
   fileio save_file;
@@ -128,37 +149,38 @@ void model3d::save(string& filename) const {
 
   save_file.write("::");
 
+  string color_data;
+
   // facet data
-  for (int i=0;i<_facets.size();i++) {
+  for (int i=0;i<_facet_data.size();i++) {
     string data("{");
-    for (int j=0;j<_facets[i].size();j++) {
-      data += itos(_facets[i][j]);
-      if (j != _facets[i].size()-1) data += ", ";
+    color_data += "{";
+    for (int j=0;j<_facet_data[i].size();j++) {
+      data += itos(_facet_data[i][j].id);
+      color_data += (_facet_data[i][j].color).to_string();
+      if (j != _facet_data[i].size()-1) {
+        data += ", ";
+        color_data += "; ";
+      }
     }
     data += "}";
+    color_data += "}";
     save_file.write(data);
   }
 
   save_file.write("::");
 
   // color data
-  for (int i=0;i<_facet_colors.size();i++) {
-    string data("{");
-    for (int j=0;j<_facet_colors[i].size();j++) {
-      data += _facet_colors[i][j].to_string();
-      if (j != _facet_colors[i].size()-1) data += "; ";
-    }
-    data += "}";
-    save_file.write(data);
-  }
+  save_file.write(color_data);
 
   save_file.close();
 }
 
 bool model3d::load(const string& filename) {
   _coordinates.clear();
-  _facets.clear();
-  _facet_colors.clear();
+  _facet_data.clear();
+
+  _initialize();
 
   fileio save_file;
   save_file.open(filename, "r");
@@ -178,15 +200,17 @@ bool model3d::load(const string& filename) {
 
   // facet data
   data = save_file.read(-1, "::");
+  _facet_data.clear(); // remove the first vector element because one is added automatically during the load
   vector<string> facet_list_list(explode(data, "}", -1)); // removes the last brace
   for (int i=0;i<facet_list_list.size();i++) {
     facet_list_list[i].erase(facet_list_list[i].begin()); // remove the first brace
-    vector<string> facet_list(explode(facet_list_list[i], ", ", -1));
-    vector<int> facet_int_list;
-    for (int j=0;j<facet_list.size();j++) {
-      facet_int_list.push_back(atoi(facet_list[j].c_str()));
+    vector<string> facet_str_list(explode(facet_list_list[i], ", ", -1));
+    vector<facet> facet_list;
+    for (int j=0;j<facet_str_list.size();j++) {
+      facet_list.push_back(facet(atoi(facet_str_list[j].c_str()), DEFAULT_COLOR));
+      _vertex_count++;
     }
-    _facets.push_back(facet_int_list);
+    _facet_data.push_back(facet_list);
   }
 
   // color data
@@ -194,12 +218,10 @@ bool model3d::load(const string& filename) {
   vector<string> color_list_list(explode(data, "}", -1)); // removes the last brace
   for (int i=0;i<color_list_list.size();i++) {
     color_list_list[i].erase(color_list_list[i].begin()); // remove the first brace
-    vector<string> color_list(explode(color_list_list[i], "; ", -1));
-    vector<vect3f> color_vect3f_list;
-    for (int j=0;j<color_list.size();j++) {
-      color_vect3f_list.push_back(vect3f().from_string(color_list[j]));
+    vector<string> face_color_list(explode(color_list_list[i], "; ", -1));
+    for (int j=0;j<face_color_list.size();j++) {
+      _facet_data[i][j].color = vect3f().from_string(face_color_list[j]);
     }
-    _facet_colors.push_back(color_vect3f_list);
   }
 
   return true;
@@ -255,22 +277,19 @@ void model3d::draw() const {
   }
   glTranslatef(_pos.x, _pos.y, _pos.z);
 
-  for (int i=0;i<_facets.size();i++) { // ...for each face
+  for (int i=0;i<_facet_data.size();i++) { // ...for each face
     glBegin(_draw_mode);
-    glColor3f(((float)i+1)/_facets.size(), ((float)i+1)/_facets.size(), ((float)i+1)/_facets.size());
-    for (int j=0;j<_facets[i].size();j++) { // ...for each vertex
+    glColor3f(((float)i+1)/_facet_data.size(), ((float)i+1)/_facet_data.size(), ((float)i+1)/_facet_data.size());
+    for (int j=0;j<_facet_data[i].size();j++) { // ...for each vertex
       // _facets[i][j] is the index which corresponds with _coordinates.
       // _coordinates[index] contains a vertex3f struct containing x,y,z coordinates
 
       // enable color
-      int facet_indices[2]; facet_indices[0]=i; facet_indices[1]=j;
-      if (_in_bounds(facet_indices, _facet_colors)) {
-        // aliasing: c = the vect3f within _facet_colors
-        const vect3f* const c = &(_facet_colors[facet_indices[0]][facet_indices[1]]);
-        glColor3f((*c).x, (*c).y, (*c).z);
-      }
+      // aliasing: c = the vect3f within _facet_colors
+      const vect3f* const c = &(_facet_data[i][j].color);
+      glColor3f((*c).x, (*c).y, (*c).z);
 
-      glVertex3f(_coordinates[_facets[i][j]].x, _coordinates[_facets[i][j]].y, _coordinates[_facets[i][j]].z);
+      glVertex3f(_coordinates[_facet_data[i][j].id].x, _coordinates[_facet_data[i][j].id].y, _coordinates[_facet_data[i][j].id].z);
     }
     glEnd();
   }

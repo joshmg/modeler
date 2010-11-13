@@ -38,33 +38,35 @@ void define_grid_branch(void*); // for multithreading
 void merge_model_branch(void*); // for multithreading
 
 // misc utility functions
-int get_index(const vect3f&, const vector<vect3f>&); // returns the index where the point is found within the vector. -1 if not found.
-bool in_bounds(const int* const, const vector<vector<vect3f>>&); // true if int vertices[2] is a valid index within the 2d vector
-vector<vector<vect3f>> model_to_point_list(const model3d&, vector<vector<vect3f>>&, int*);
-model3d point_list_to_model(const vector<vector<vect3f>>&, const vector<vector<vect3f>>&);
+//int get_index(const vect3f&, const vector<vect3f>&); // returns the index where the point is found within the vector. -1 if not found.
+template <typename T> bool in_bounds(const int* const, const vector<vector<T>>&); // true if int vertices[2] is a valid index within the 2d vector
+//vector<vector<vect3f>> model_to_point_list(const model3d&, vector<vector<vect3f>>&, int*);
+//model3d point_list_to_model(const vector<vector<vect3f>>&, const vector<vector<vect3f>>&);
 void edit_model(int); // switches a loaded model buffer with active editing buffer
 void define_cube(); // defines the grid lines using UNIT_SIZE and CUBE_COUNT
 
 // globals
 int   SCREEN_W = 800,    SCREEN_H = 600;
 float  WORLD_W = 100.0f,  WORLD_H = 100.0f;
-//vect3f ROTATION, PAN;
 const float VIEW_ANGLE = 45.0f; // static frustrum angle
 vect3f POINTER; // position of the cursor
 vector<cube> RUBIX; // the grid lines
 float UNIT_SIZE; // grid line width
 int CUBE_COUNT; // number of unit cubes centered at origin
-int SELECTED[2] = {-1, 0}; // the currently selected vertex (used via Tab button) ((-1, -1) is the convention for no selection)
+index2d SELECTED(-1, 0); // the currently selected vertex (used via Tab button) ((-1, -1) is the convention for no selection)
+vect3f HIGHLIGHTED_COLOR(1.0f, 1.0f, 1.0f);
 bool DRAW_POLYGON_MODE = false; // if false glBegin(GL_LINES) is used, true = glBegin(GL_POLYGON)
 bool HIGHLIGHT = true; // toggles the highlight of the working unit cube
 
-vector<vector<vect3f>> MODEL_POINTS, MODEL_COLORS; // the 2d vector containing all (including duplicate) points
+//vector<vector<vect3f>> MODEL_POINTS, MODEL_COLORS; // the 2d vector containing all (including duplicate) points
                                                    // 1st level vector is a particular face of the model (ie: when 'p' is pressed)
                                                    // 2nd level vector is the list of points for that face
                                                    // note that these are points, not facet lists
 
-bool DISPLAY_MODEL_POINTS = true; // if false, the edited model buffer is not displayed.
-int MODEL_POINTS_SIZE = 0; // the number of points within MODEL_POINTS and MODEL_COLORS
+model3d WORKING_MODEL; // the model currently being edited
+
+bool DISPLAY_WORKING_MODEL = true; // if false, the edited model buffer is not displayed.
+//int MODEL_POINTS_SIZE = 0; // the number of points within MODEL_POINTS and MODEL_COLORS
                            // note that it is not particularly used for anything but maintained
 
 vector<model3d> LOADED_MODELS; // the loaded models (accessed via load/save) (display toggled via 1-9) (edited via F1-F9)
@@ -78,7 +80,7 @@ float PALETTE_MOUSE_CTRL[2]; // the left x value and width of the area which con
                              //   (since that location is calculated dynamically depending on window size)
 
 vect3f SELECTED_COLOR(1.0f, 0.0, 0.0); // the last selected color from the palette
-vect3f DEFAULT_COLOR(1.0f, 0.0, 1.0f); // fuchsia (used when a vertex color cannot be located (hopefully never))
+//vect3f DEFAULT_COLOR(1.0f, 0.0, 1.0f); // fuchsia (used when a vertex color cannot be located (hopefully never))
 vect3f* COLOR_MAP = new vect3f[WORLD_W]; // the color map used to map the palette coords to the particular color
 
 bool ALREADY_BRANCHED = false; // only one branching operation at a time (don't want to be loading and saving at the same time...)
@@ -114,38 +116,31 @@ void display() {
   draw_pointer();
 
   glLineWidth(2.0);
+  
   // draw edit model buffer
-  for (int i=0;i<MODEL_POINTS.size();i++) {
-    if (i == MODEL_POINTS.size()-1 || DISPLAY_MODEL_POINTS) {
-      if (!DRAW_POLYGON_MODE) glBegin(GL_LINE_STRIP);
-      else glBegin(GL_POLYGON);
+  if (DISPLAY_WORKING_MODEL) {
+    GLenum restore_gl_draw_mode = WORKING_MODEL.get_draw_mode();
+    if (DRAW_POLYGON_MODE) WORKING_MODEL.set_draw_mode(GL_LINE_LOOP); // if drawing wireframe mode, change draw mode appropriately
 
-      for (int j=0;j<MODEL_POINTS[i].size();j++) {
-
-          // handle vertex color
-          int this_vert[2]; this_vert[0] = i; this_vert[1] = j;
-          if (in_bounds(this_vert, MODEL_COLORS)) glColor3f(MODEL_COLORS[i][j].x, MODEL_COLORS[i][j].y, MODEL_COLORS[i][j].z);
-          else glColor3f(DEFAULT_COLOR.x, DEFAULT_COLOR.y, DEFAULT_COLOR.z); // default color
-
-          if (i == MODEL_POINTS.size()-1 && j == MODEL_POINTS[i].size()-1) glColor3f(1.0, 1.0, 0.0); // draw working point in yellow
-          if (SELECTED[0] == i && SELECTED[1] == j) glColor3f(1.0, 1.0, 1.0); // vertex selected is white
-          glVertex3f(MODEL_POINTS[i][j].x, MODEL_POINTS[i][j].y, MODEL_POINTS[i][j].z);
-      }
-      glEnd();
-
+    if (in_bounds(SELECTED, *(WORKING_MODEL.get_facet_data_ptr()))) {
+      // if SELECTED is valid, change the color of the selected vertex to the highlighted color and then draw, restoring original color afterwards
+      vect3f restore_color = WORKING_MODEL.get_vertex_color(SELECTED);
+      WORKING_MODEL.set_vertex_color(SELECTED, HIGHLIGHTED_COLOR);
+      WORKING_MODEL.draw();
+      WORKING_MODEL.set_vertex_color(SELECTED, restore_color);
     }
+    else WORKING_MODEL.draw();
+    if (DRAW_POLYGON_MODE) WORKING_MODEL.set_draw_mode(restore_gl_draw_mode); // restore old draw mode if it was modified...
   }
 
   // draw loaded models
   for (int i=0;i<LOADED_MODELS.size();i++) {
     if (DRAW_MODELS[i]) {
-      if (!DRAW_POLYGON_MODE) {
-        GLenum old_draw_mode = LOADED_MODELS[i].get_draw_mode();
-        LOADED_MODELS[i].set_draw_mode(GL_LINE_STRIP);
-        LOADED_MODELS[i].draw();
-        LOADED_MODELS[i].set_draw_mode(old_draw_mode);
-      }
-      else LOADED_MODELS[i].draw();
+      GLenum old_draw_mode = LOADED_MODELS[i].get_draw_mode();
+      if (DRAW_POLYGON_MODE) LOADED_MODELS[i].set_draw_mode(GL_LINE_LOOP);
+      //else LOADED_MODELS[i].set_draw_mode(GL_POLYGON);
+      LOADED_MODELS[i].draw();
+      LOADED_MODELS[i].set_draw_mode(old_draw_mode);
     }
   }
   glLineWidth(1.0);
@@ -196,7 +191,8 @@ void mouse_callback(int btn, int state, int x, int y) {
       }
       else { // clicked a color
         SELECTED_COLOR = COLOR_MAP[x];
-        if (in_bounds(SELECTED, MODEL_POINTS)) MODEL_COLORS[SELECTED[0]][SELECTED[1]] = SELECTED_COLOR;
+        //if (in_bounds(SELECTED, MODEL_POINTS)) MODEL_COLORS[SELECTED[0]][SELECTED[1]] = SELECTED_COLOR;
+        if (in_bounds(SELECTED, (*(WORKING_MODEL.get_facet_data_ptr())))) WORKING_MODEL.set_vertex_color(SELECTED, SELECTED_COLOR);
       }
     }
   }
@@ -213,30 +209,26 @@ void special_keys_callback(int key, int x, int y) {
 
   switch(key) {
     case GLUT_KEY_RIGHT: {
-      if (glutGetModifiers() == GLUT_ACTIVE_CTRL) glRotatef(movement_unit, 0.0, 1.0, 0.0); // ROTATION.y += movement_unit;
-      else if (glutGetModifiers() == GLUT_ACTIVE_ALT) glRotatef(-movement_unit, 0.0, 0.0, 1.0); // ROTATION.z -= movement_unit;
+      if (glutGetModifiers() == GLUT_ACTIVE_CTRL) glRotatef(movement_unit, 0.0, 1.0, 0.0);
+      else if (glutGetModifiers() == GLUT_ACTIVE_ALT) glRotatef(-movement_unit, 0.0, 0.0, 1.0);
       else glTranslatef(1.0, 0.0, 0.0);
-      //else PAN.x += UNIT_SIZE/2.0;
     } break;
     case GLUT_KEY_LEFT: {
-      if (glutGetModifiers() == GLUT_ACTIVE_CTRL) glRotatef(-movement_unit, 0.0, 1.0, 0.0); // ROTATION.y -= movement_unit;
-      else if (glutGetModifiers() == GLUT_ACTIVE_ALT) glRotatef(movement_unit, 0.0, 0.0, 1.0); // ROTATION.z += movement_unit;
+      if (glutGetModifiers() == GLUT_ACTIVE_CTRL) glRotatef(-movement_unit, 0.0, 1.0, 0.0);
+      else if (glutGetModifiers() == GLUT_ACTIVE_ALT) glRotatef(movement_unit, 0.0, 0.0, 1.0);
       else glTranslatef(-1.0, 0.0, 0.0);
-      //else PAN.x -= UNIT_SIZE/2.0;
     } break;
     case GLUT_KEY_UP: {
-      if (glutGetModifiers() == GLUT_ACTIVE_CTRL) glRotatef(-movement_unit, 1.0, 0.0, 0.0); // ROTATION.x -= movement_unit;
+      if (glutGetModifiers() == GLUT_ACTIVE_CTRL) glRotatef(-movement_unit, 1.0, 0.0, 0.0);
       else if (glutGetModifiers() == GLUT_ACTIVE_ALT) {}
       else if (glutGetModifiers() == GLUT_ACTIVE_SHIFT) glTranslatef(0.0, 0.0, 1.0);
       else glTranslatef(0.0, -1.0, 0.0);
-      //else PAN.y += UNIT_SIZE/2.0;
     } break;
     case GLUT_KEY_DOWN: {
-      if (glutGetModifiers() == GLUT_ACTIVE_CTRL) glRotatef(movement_unit, 1.0, 0.0, 0.0); // ROTATION.x += movement_unit;
+      if (glutGetModifiers() == GLUT_ACTIVE_CTRL) glRotatef(movement_unit, 1.0, 0.0, 0.0);
       else if (glutGetModifiers() == GLUT_ACTIVE_ALT) {}
       else if (glutGetModifiers() == GLUT_ACTIVE_SHIFT) glTranslatef(0.0, 0.0, -1.0);
       else glTranslatef(0.0, 1.0, 0.0);
-      //else PAN.y -= UNIT_SIZE/2.0;
     } break;
 
     case GLUT_KEY_F1: { edit_model(0); } break;
@@ -255,7 +247,7 @@ void special_keys_callback(int key, int x, int y) {
   refresh();
 }
 void keyboard_callback(unsigned char key, int x, int y) {
-  if (key == 'q' || key == 27) {
+  if (key == 'q') {
     if (!ALREADY_BRANCHED) _beginthread(&quit_branch, 0, (void*)0);
   }
 
@@ -283,59 +275,35 @@ void keyboard_callback(unsigned char key, int x, int y) {
       glLoadIdentity();
       glTranslatef(0.0, 0.0, -UNIT_SIZE*(CUBE_COUNT+2));
       POINTER = vect3f();
-      //ROTATION = vect3f();
-      //PAN = vect3f(0.0, 0.0, -UNIT_SIZE*(CUBE_COUNT+2));
     } break;
 
     case 'c': {
-      if (in_bounds(SELECTED, MODEL_POINTS)){
-        MODEL_POINTS_SIZE -= MODEL_POINTS[SELECTED[0]].size();
-        MODEL_POINTS[SELECTED[0]].erase(MODEL_POINTS[SELECTED[0]].begin()+(SELECTED[1]));
-        MODEL_COLORS[SELECTED[0]].erase(MODEL_COLORS[SELECTED[0]].begin()+(SELECTED[1]));
+      if (in_bounds(SELECTED, (*(WORKING_MODEL.get_facet_data_ptr())))) {
+        WORKING_MODEL.remove_vertex(SELECTED);
       }
-      SELECTED[0] = -1;
-      SELECTED[1] = -1;
+      SELECTED.clear();
     } break;
     case 'C': {
-      MODEL_POINTS.clear();
-      MODEL_COLORS.clear();
-      MODEL_POINTS.push_back(vector<vect3f>());
-      MODEL_COLORS.push_back(vector<vect3f>());
-      MODEL_POINTS_SIZE = 0;
-      SELECTED[0] = -1;
-      SELECTED[1] = -1;
+      WORKING_MODEL.clear();
+      SELECTED.clear();
     } break;
     case 'f': {
-      if (in_bounds(SELECTED, MODEL_POINTS)) {
-        MODEL_POINTS.back().push_back(MODEL_POINTS[SELECTED[0]][SELECTED[1]]);
-        MODEL_COLORS.back().push_back(SELECTED_COLOR);
-        MODEL_POINTS_SIZE++;
-
-        SELECTED[0] = MODEL_POINTS.size()-1;
-        SELECTED[1] = MODEL_POINTS[SELECTED[0]].size()-1;
-      }
-      else {
-        SELECTED[0] = -1;
-        SELECTED[1] = -1;
+      const vector<vect3f>* const model_coordinates = WORKING_MODEL.get_coordinates_ptr();
+      const vector<vector<facet>>* const model_facets = WORKING_MODEL.get_facet_data_ptr();
+      if (in_bounds(SELECTED, *model_facets)) {
+        WORKING_MODEL.add_vertex((*model_coordinates)[((*model_facets)[SELECTED[0]][SELECTED[1]]).id], SELECTED_COLOR);
       }
     } break;
 
     case 'p': {
-      MODEL_POINTS.push_back(vector<vect3f>());
-      MODEL_COLORS.push_back(vector<vect3f>());
-      SELECTED[0] = -1;
-      SELECTED[1] = -1;
+      WORKING_MODEL.push_face();
+      SELECTED.clear();
     } break;
     case 'P': {
-      if (MODEL_POINTS.size() > 0) {
-        MODEL_POINTS.pop_back();
-        MODEL_COLORS.pop_back();
-        SELECTED[0] = -1;
-        SELECTED[1] = -1;
-      }
+      WORKING_MODEL.pop_face();
     } break;
     case 'o': {
-      DISPLAY_MODEL_POINTS = !DISPLAY_MODEL_POINTS; // hides the model
+      DISPLAY_WORKING_MODEL = !DISPLAY_WORKING_MODEL; // hides the model
     } break;
     case 'g': {
       DRAW_GRID = !DRAW_GRID;
@@ -350,48 +318,44 @@ void keyboard_callback(unsigned char key, int x, int y) {
       HIGHLIGHT = !HIGHLIGHT;
     } break;
 
-    /*case 'z': { // zoom out
-      PAN.z -= 1.0f;
-    } break;
-    case 'Z': { // zoom in
-      PAN.z += 1.0f;
-    } break;*/
-
     case 32: { // space key
-      MODEL_POINTS.back().push_back(POINTER);
-      MODEL_COLORS.back().push_back(SELECTED_COLOR);
-      MODEL_POINTS_SIZE++;
+      WORKING_MODEL.add_vertex(POINTER, SELECTED_COLOR);
     } break;
     case 9: { // tab key
-      if (!in_bounds(SELECTED, MODEL_POINTS)) {
-        SELECTED[0] = 0;
-        SELECTED[1] = 0;
-        if (!in_bounds(SELECTED, MODEL_POINTS)) {
-          SELECTED[0] = -1;
-          SELECTED[1] = -1;
-        }
-      }
+      const vector<vector<facet>>* const facet_data = WORKING_MODEL.get_facet_data_ptr();
 
-      if (in_bounds(SELECTED, MODEL_POINTS)) {
+      if (!in_bounds(SELECTED, *facet_data)) {
+        if (WORKING_MODEL.vertex_count() > 0) {
+          SELECTED[0] = 0;
+          SELECTED[1] = 0;
+        }
+        else SELECTED.clear();
+      }
+      else {
         if (glutGetModifiers() == GLUT_ACTIVE_SHIFT) {
-          SELECTED[1]--;
-          if (!in_bounds(SELECTED, MODEL_POINTS)) {
-            SELECTED[0] = mod(SELECTED[0]-1, MODEL_POINTS.size());
-            SELECTED[1] = 0;
-            if (in_bounds(SELECTED, MODEL_POINTS)) {
-              SELECTED[1] = MODEL_POINTS[SELECTED[0]].size()-1;
-            }
+          if (SELECTED[1] > 0) SELECTED[1]--; // set the selected vertex to the previous vertex
+          else if (SELECTED[0] > 0) {
+            // set the selected vertex to the last vertex in the previous face
+            SELECTED[0]--;
+            SELECTED[1] = facet_data[SELECTED[0]].size()-1;
+          }
+          else {
+            // set the selected vertex to the last vertex of the last face
+            SELECTED[0] = facet_data->size()-1;
+            SELECTED[1] = (*facet_data)[SELECTED[0]].size()-1;
           }
         }
         else {
-          SELECTED[1]++;
-          if (!in_bounds(SELECTED, MODEL_POINTS)) {
-            SELECTED[0] = mod(SELECTED[0]+1, MODEL_POINTS.size());
+          if (SELECTED[1] < (*facet_data)[SELECTED[0]].size()-1) SELECTED[1]++;  // set the selected vertex to the next vertex
+          else if (SELECTED[0] < (*facet_data).size()-1) {
+            // set the vertex to the first vertex in the next face
+            SELECTED[0]++;
             SELECTED[1] = 0;
           }
-          if (!in_bounds(SELECTED, MODEL_POINTS)) {
-            SELECTED[0] = -1;
-            SELECTED[1] = -1;
+          else {
+            // set the vertex to the first vertex
+            SELECTED[0] = 0;
+            SELECTED[1] = 0;
           }
         }
       }
@@ -450,6 +414,9 @@ void keyboard_callback(unsigned char key, int x, int y) {
       if (!ALREADY_BRANCHED) _beginthread(&merge_model_branch, 0, (void*)0);
     } break;
 
+    case 27: {
+      SELECTED.clear();
+    } break;
     default: {} break;
   }
 
@@ -473,12 +440,6 @@ void set_camera() {
                   1.0, 100.0);                 // near/far clipping planes
 
   glMatrixMode(GL_MODELVIEW);
-  //glLoadIdentity();
-
-  //glTranslatef(PAN.x, PAN.y, PAN.z);
-  /*glRotatef(ROTATION.y, 0.0, 1.0, 0.0);
-  glRotatef(ROTATION.x, 1.0, 0.0, 0.0);
-  glRotatef(ROTATION.z, 0.0, 0.0, 1.0);*/
 }
 
 void draw_axis() {
@@ -599,17 +560,15 @@ int main(int argc, char** argv) {
        << "  Select a color from the palette to change the Tab-selected facet's color." << endl
        << "      - additional vertices are drawn in the most recently selected color." << endl
        << "  The + or - buttons on the palette change its alpha and gamma levels." << endl
+       << "  'q' exits the program." << endl
        << endl;
-
-  MODEL_POINTS.push_back(vector<vect3f>());
-  MODEL_COLORS.push_back(vector<vect3f>());
 
   UNIT_SIZE = 1.0f;
   CUBE_COUNT = 9;
 
   define_cube();
 
-  //PAN = vect3f(0.0, 0.0, -UNIT_SIZE*(CUBE_COUNT+2));
+  for (int i=0;i<9;i++) LOADED_MODELS.push_back(model3d());
 
   glutInit(&argc, argv);
   glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH); // double buffer, rgb color, depth buffer
@@ -633,64 +592,9 @@ int main(int argc, char** argv) {
   return 0;
 }
 
-// returns the index of point if it is located within coords
-// returns -1 if not found
-int get_index(const vect3f& point, const vector<vect3f>& coords) {
-  for (int i=0;i<coords.size();i++) {
-    if (point == coords[i]) return i;
-  }
-  return -1;
-}
-
-bool in_bounds(const int* const indices, const vector<vector<vect3f>>& vect) {
+template <typename T> bool in_bounds(const int* const indices, const vector<vector<T>>& vect) {
   if (indices[0] < 0 || indices[1] < 0) return false;
   return (indices[0] < vect.size() && indices[1] < vect[indices[0]].size());
-}
-
-// takes a valid model3d object and returns an array of an array of points (where each array or points represents a model's side or facet list)
-// the optional int*, if given, contains the total number of vertices within the returned value (including redundant vertices) (ie: MODEL_POINTS_SIZE)
-vector<vector<vect3f>> model_to_point_list(const model3d& loaded_model, vector<vector<vect3f>>& produced_color_list, int* produced_point_list_size=0) {
-  vector<vector<vect3f>> point_list;
-  int point_count = 0;
-
-  produced_color_list.clear();
-
-  vector<vect3f> coordinate_list(loaded_model.get_coordinates());
-  vector<vector<int>> facet_index_list(loaded_model.get_facets());
-  produced_color_list = loaded_model.get_facet_colors();
-
-  for (int i=0;i<facet_index_list.size();i++) {
-    vector<vect3f> side_points;
-    for (int j=0;j<facet_index_list[i].size();j++) {
-      side_points.push_back(coordinate_list[facet_index_list[i][j]]);
-      point_count++;
-    }
-    point_list.push_back(side_points);
-  }
-
-  if (produced_point_list_size != 0) *produced_point_list_size = point_count;
-  return point_list;
-}
-
-model3d point_list_to_model(const vector<vector<vect3f>>& point_list, const vector<vector<vect3f>>& color_list) {
-  vector<vect3f> coordinates;
-  vector<vector<int>> facets;
-
-  // remove duplicate points and assign each point a unique index
-  for (int i=0;i<point_list.size();i++) { // for each face
-    vector<int> face_facets;
-    for (int j=0;j<point_list[i].size();j++) { // for each point of each face
-      int index = get_index(point_list[i][j], coordinates); // get the point's corresponding index within coordinates list
-      if (index == -1 || true) { // if the point doesn't exist within the coordinate list
-        index = coordinates.size(); // set the index appropriately
-        coordinates.push_back(MODEL_POINTS[i][j]); // insert the point into the coordinates list
-      }
-      face_facets.push_back(index); // insert the facet (the coordinate ID) into the list of facets for the side
-    }
-    facets.push_back(face_facets); // insert the list of facets for the side
-  }
-
-  return model3d(coordinates, facets, &color_list);
 }
 
 void draw_color_palette() {
@@ -776,13 +680,13 @@ void draw_color_palette() {
   }
 }
 
-void edit_model(int ID) {
-  if (ID < LOADED_MODELS.size()) {
-    model3d edited_model = point_list_to_model(MODEL_POINTS, MODEL_COLORS);
-    MODEL_POINTS = model_to_point_list(LOADED_MODELS[ID], MODEL_COLORS, &MODEL_POINTS_SIZE);
-    LOADED_MODELS[ID] = edited_model;
+void edit_model(int id) {
+  if (id < LOADED_MODELS.size()) {
+    model3d temp_model(LOADED_MODELS[id]);
+    LOADED_MODELS[id] = WORKING_MODEL;
+    WORKING_MODEL = temp_model;
 
-    DRAW_MODELS[ID] = false;
+    DRAW_MODELS[id] = false;
   }
 }
 
@@ -814,16 +718,9 @@ void save_branch(void*) {
   getline(cin, filename);
 
   cout << "Saving...";
-  LOADED_MODELS.push_back(point_list_to_model(MODEL_POINTS, MODEL_COLORS));
-  LOADED_MODELS.back().save(filename);
-  cout << " done. (ID: " << LOADED_MODELS.size() << ") (file: " << filename << ")" << endl;
 
-  MODEL_POINTS.clear();
-  MODEL_POINTS.push_back(vector<vect3f>());
-  MODEL_POINTS_SIZE = 0;
-
-  SELECTED[0] = -1;
-  SELECTED[1] = -1;
+  WORKING_MODEL.save(filename);
+  cout << " done. (file: " << filename << ")" << endl;
 
   refresh();
 
@@ -837,22 +734,21 @@ void load_branch(void*) {
 
   glutIconifyWindow();
 
-  if (LOADED_MODELS.size() < 9) {
-    string filename;
+  string filename;
 
-    cout << "[LOAD] Enter filename: ";
-    getline(cin, filename);
+  cout << "[LOAD] Enter filename: ";
+  getline(cin, filename);
 
-    model3d loaded_model;
-    if (loaded_model.load(filename)) {
-      LOADED_MODELS.push_back(loaded_model);
-      cout << "Loaded model " << LOADED_MODELS.size() << ". (file: " << filename << ")" << endl;
-      DRAW_MODELS[LOADED_MODELS.size()-1] = true;
-    }
-    else cout << "Error loading model. (file: " << filename << ")" << endl;
+  model3d loaded_model;
 
-    refresh();
+  // add a check to see if current model is saved...
+
+  if (WORKING_MODEL.load(filename)) {
+    cout << "Loaded model. (file: " << filename << ")" << endl;
   }
+  else cout << "Error loading model. (file: " << filename << ")" << endl;
+
+  refresh();
 
   glutShowWindow();
 
@@ -909,24 +805,17 @@ void merge_model_branch(void*) {
 
   int model_id = atoi(input.c_str())-1;
 
-  if (model_id < LOADED_MODELS.size() && model_id >= 0) {
-    for (int i=0;i<MODEL_POINTS.size();i++) {
-      LOADED_MODELS[model_id].push_face();
-      for (int j=0;j<MODEL_POINTS[i].size();j++) {
-        int facet_indices[2] = {i, j};
-        if (!in_bounds(facet_indices, MODEL_COLORS)) cout << "[" << i << "][" << j << "] is invalid for MODEL_COLORS." << endl;
-        LOADED_MODELS[model_id].add_vertex(MODEL_POINTS[i][j], MODEL_COLORS[i][j]);
+  if (model_id < LOADED_MODELS.size() && model_id > -1) {
+    cout << "Merging...";
+    const vector<vect3f>* const coordinate_data = LOADED_MODELS[model_id].get_coordinates_ptr();
+    const vector<vector<facet>>* const facet_data = LOADED_MODELS[model_id].get_facet_data_ptr();
+    for (int i=0;i<facet_data->size();i++) {
+      WORKING_MODEL.push_face();
+      for (int j=0;j<(*facet_data)[i].size();j++) {
+        WORKING_MODEL.add_vertex((*coordinate_data)[(*facet_data)[i][j].id], (*facet_data)[i][j].color);
       }
     }
-
-    MODEL_POINTS.clear();
-    MODEL_COLORS.clear();
-    MODEL_POINTS.push_back(vector<vect3f>());
-    MODEL_COLORS.push_back(vector<vect3f>());
-
-    edit_model(model_id);
-
-    cout << "Merge completed." << endl;
+    cout << " done." << endl;
   }
   else cout << "Invalid model number." << endl;
 
