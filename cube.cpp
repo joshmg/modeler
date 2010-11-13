@@ -35,9 +35,9 @@ void cube::initialize(const vect3f p, float w) {
   _width = w;
   _bottom_left = p;
 
-  _front.initialize(p, _width, FRONT);
+  _front.initialize(p+vect3f(0.0, 0.0, _width), _width, FRONT);
   _right.initialize(p+vect3f(_width, 0.0, 0.0), _width, RIGHT);
-  _back.initialize(p+vect3f(0.0, 0.0, _width), _width, BACK);
+  _back.initialize(p, _width, BACK);
   _left.initialize(p+vect3f(0.0, 0.0, 0.0), _width, LEFT);
   _top.initialize(p+vect3f(0.0, _width, 0.0), _width, TOP);
   _bottom.initialize(p+vect3f(0.0, 0.0, 0.0), _width, BOTTOM);
@@ -45,14 +45,21 @@ void cube::initialize(const vect3f p, float w) {
 
 void cube::set_color(const vect3f& c) { _color = c; }
 
-void cube::set_highlight(const vect3f& c) {
+void cube::set_highlight(const vect3f& c, float t) {
   _highlight_color = c;
+  _translucency = t;
   _front.highlight_color = c;
+  _front.translucency = t;
   _right.highlight_color = c;
+  _right.translucency = t;
   _back.highlight_color = c;
+  _back.translucency = t;
   _left.highlight_color = c;
+  _left.translucency = t;
   _top.highlight_color = c;
+  _top.translucency = t;
   _bottom.highlight_color = c;
+  _bottom.translucency = t;
 }
 
 bool cube::contains_point(const vect3f& point) const {
@@ -139,13 +146,39 @@ bool cube::side::contains_point(const vect3f& point) const {
 void cube::side::draw() const {
   if (solid) {
     glBegin(GL_QUADS);
-    glColor4f(highlight_color.x, highlight_color.y, highlight_color.z, 0.1);
+    glColor4f(highlight_color.x, highlight_color.y, highlight_color.z, translucency);
+
+    #ifndef USE_GL_COLOR_MATERIAL
+      glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, glvect4f(highlight_color.x, highlight_color.y, highlight_color.z, translucency));
+    #endif
+
   }
-  else glBegin(GL_LINE_STRIP);
-  glVertex3f(bottom_left.x, bottom_left.y, bottom_left.z);
-  glVertex3f(bottom_right.x, bottom_right.y, bottom_right.z);
-  glVertex3f(top_right.x, top_right.y, top_right.z);
-  glVertex3f(top_left.x, top_left.y, top_left.z);
-  if (!solid) glVertex3f(bottom_left.x, bottom_left.y, bottom_left.z);
+  else glBegin(GL_LINE_LOOP);
+
+  // specifiy correct normal:
+  switch(face) {
+    case FRONT: { glNormal3f(0.0, 0.0, 1.0); } break;
+    case RIGHT: { glNormal3f(1.0, 0.0, 0.0); } break;
+    case BACK: { glNormal3f(0.0, 0.0, -1.0); } break;
+    case LEFT: { glNormal3f(-1.0, 0.0, 0.0); } break;
+    case TOP: { glNormal3f(0.0, 1.0, 0.0); } break;
+    case BOTTOM: { glNormal3f(0.0, -1.0, 0.0); } break;
+  }
+
+  // draw with the correct face pointing outwards
+  switch(face) {
+    case FRONT: case LEFT: case BOTTOM: {
+      glVertex3f(bottom_left.x, bottom_left.y, bottom_left.z);
+      glVertex3f(bottom_right.x, bottom_right.y, bottom_right.z);
+      glVertex3f(top_right.x, top_right.y, top_right.z);
+      glVertex3f(top_left.x, top_left.y, top_left.z);
+    } break;
+    case BACK: case RIGHT: case TOP: {
+      glVertex3f(bottom_right.x, bottom_right.y, bottom_right.z);
+      glVertex3f(bottom_left.x, bottom_left.y, bottom_left.z);
+      glVertex3f(top_left.x, top_left.y, top_left.z);
+      glVertex3f(top_right.x, top_right.y, top_right.z);
+    } break;
+  }
   glEnd();
 }

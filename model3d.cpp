@@ -19,6 +19,7 @@ void model3d::_initialize() {
   _facet_data.push_back(vector<facet>());
 
   _vertex_count = 0;
+  _need_normals = false;
 
   _draw_mode = GL_POLYGON;
   _pos = vect3f(0.0f, 0.0f, 0.0f);
@@ -43,6 +44,19 @@ int model3d::_get_facet_id(const vect3f& point) const {
 template <typename T> bool model3d::_in_bounds(const int* const indices, const vector<vector<T>>& vect) const {
   if (indices[0] < 0 || indices[1] < 0) return false;
   return (indices[0] < vect.size() && indices[1] < vect[indices[0]].size());
+}
+
+void model3d::_calculate_normals() const {
+  if (_facet_data.back().size() < 3) return; // need a plane to calculate normals
+
+  int size = _facet_data.back().size();
+  for (int i=0;i<size;i++) {
+    const vect3f* const a = &(_coordinates[(((_facet_data.back())[mod(i+0, size)]).id)]);
+    const vect3f* const b = &(_coordinates[(((_facet_data.back())[mod(i+1, size)]).id)]);
+    const vect3f* const c = &(_coordinates[(((_facet_data.back())[mod(i+2, size)]).id)]);
+    ((_facet_data.back())[i]).normal = ((*b)-(*a)).cross((*c)-(*b));
+    ((_facet_data.back())[i]).normal.normalize();
+  }
 }
 
 model3d::model3d() { _initialize(); }
@@ -90,13 +104,19 @@ vect3f model3d::get_vertex_color(int* vertex_id) const {
 }
 
 // appends a vertex to the object's current face vector
-index2d model3d::add_vertex(const vect3f& point, const vect3f& color) {
-  int facet_id(_get_facet_id(point));
+index2d model3d::add_vertex(const vect3f& point, const vect3f& color, const vect3f* const normal) {
+  int facet_id = _get_facet_id(point);
   if (facet_id < 0) { // vertex doesn't exist yet
     facet_id = _coordinates.size();
     _coordinates.push_back(point);
   }
-  _facet_data.back().push_back(facet(facet_id, color));
+
+  // set flag to calculate normals on face push or save:
+  if (normal == 0) {
+    _need_normals = true;
+    _facet_data.back().push_back(facet(facet_id, color));
+  }
+  else _facet_data.back().push_back(facet(facet_id, color, *normal));
 
   _vertex_count++;
 
@@ -110,17 +130,24 @@ void model3d::remove_vertex(const index2d& vertex_id) {
 }
 
 void model3d::push_face() {
-  if (_facet_data.back().size() > 0) _facet_data.push_back(vector<facet>()); // only add a face if the current face has a facet
+  if (_facet_data.back().size() > 0) {
+    if (_need_normals) _calculate_normals(); // calculate normals if they're undefined
+    _facet_data.push_back(vector<facet>()); // only add a face if the current face has a facet
+  }
+  _need_normals = false;
 }
 
 void model3d::pop_face() {
   if (_facet_data.size() > 1) _facet_data.pop_back();
   else if (_facet_data.size() == 1) _facet_data.back().clear();
+  _need_normals = false;
 }
 
 int model3d::vertex_count() const { return _vertex_count; }
 
 void model3d::save(string& filename) const {
+  if (_need_normals) _calculate_normals();
+
   fileio save_file;
   if (filename.length() == 0) {
     filename = "model_0";
@@ -149,22 +176,26 @@ void model3d::save(string& filename) const {
 
   save_file.write("::");
 
-  string color_data;
+  string color_data, normal_data;
 
   // facet data
   for (int i=0;i<_facet_data.size();i++) {
     string data("{");
     color_data += "{";
+    normal_data += "{";
     for (int j=0;j<_facet_data[i].size();j++) {
       data += itos(_facet_data[i][j].id);
       color_data += (_facet_data[i][j].color).to_string();
+      normal_data += (_facet_data[i][j].normal).to_string();
       if (j != _facet_data[i].size()-1) {
         data += ", ";
         color_data += "; ";
+        normal_data += "; ";
       }
     }
     data += "}";
     color_data += "}";
+    normal_data += "}";
     save_file.write(data);
   }
 
@@ -172,6 +203,10 @@ void model3d::save(string& filename) const {
 
   // color data
   save_file.write(color_data);
+  save_file.write("::");
+  
+  // normal data
+  save_file.write(normal_data);
 
   save_file.close();
 }
@@ -214,13 +249,24 @@ bool model3d::load(const string& filename) {
   }
 
   // color data
-  data = save_file.read(-1);
+  data = save_file.read(-1, "::");
   vector<string> color_list_list(explode(data, "}", -1)); // removes the last brace
   for (int i=0;i<color_list_list.size();i++) {
     color_list_list[i].erase(color_list_list[i].begin()); // remove the first brace
     vector<string> face_color_list(explode(color_list_list[i], "; ", -1));
     for (int j=0;j<face_color_list.size();j++) {
       _facet_data[i][j].color = vect3f().from_string(face_color_list[j]);
+    }
+  }
+
+  // normal data
+  data = save_file.read(-1, "::");
+  vector<string> normal_list_list(explode(data, "}", -1)); // removes the last brace
+  for (int i=0;i<normal_list_list.size();i++) {
+    normal_list_list[i].erase(normal_list_list[i].begin()); // remove the first brace
+    vector<string> face_normal_list(explode(normal_list_list[i], "; ", -1));
+    for (int j=0;j<face_normal_list.size();j++) {
+      _facet_data[i][j].normal = vect3f().from_string(face_normal_list[j]);
     }
   }
 
@@ -279,7 +325,6 @@ void model3d::draw() const {
 
   for (int i=0;i<_facet_data.size();i++) { // ...for each face
     glBegin(_draw_mode);
-    glColor3f(((float)i+1)/_facet_data.size(), ((float)i+1)/_facet_data.size(), ((float)i+1)/_facet_data.size());
     for (int j=0;j<_facet_data[i].size();j++) { // ...for each vertex
       // _facets[i][j] is the index which corresponds with _coordinates.
       // _coordinates[index] contains a vertex3f struct containing x,y,z coordinates
@@ -287,8 +332,14 @@ void model3d::draw() const {
       // enable color
       // aliasing: c = the vect3f within _facet_colors
       const vect3f* const c = &(_facet_data[i][j].color);
+
       glColor3f((*c).x, (*c).y, (*c).z);
 
+      #ifndef USE_GL_COLOR_MATERIAL
+        glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, glvect4f(1, (*c).y, (*c).z, 1.0));
+      #endif
+      
+      glNormal3f(_facet_data[i][j].normal.x, _facet_data[i][j].normal.y, _facet_data[i][j].normal.z);
       glVertex3f(_coordinates[_facet_data[i][j].id].x, _coordinates[_facet_data[i][j].id].y, _coordinates[_facet_data[i][j].id].z);
     }
     glEnd();
@@ -307,3 +358,16 @@ void model3d::draw() const {
 
   glPopMatrix();
 }
+
+
+// *** BEGIN FACET CLASS DEFINITIONS ***
+
+facet::facet() {
+  id = -1;
+  color = DEFAULT_COLOR;
+  normal = vect3f(0.0, 0.0, 1.0);
+}
+
+facet::facet(int _id, const vect3f& _color, const vect3f& _normal)
+            : id(_id), color(_color), normal(_normal) { }
+

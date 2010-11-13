@@ -15,12 +15,10 @@ const vect3f DEFAULT_COLOR(1.0f, 0.0f, 1.0f);
 struct facet {
   int id;
   vect3f color;
+  mutable vect3f normal;
 
-  facet() {
-    id = -1;
-    color = DEFAULT_COLOR;
-  }
-  facet(int _id, const vect3f& _color) : id(_id), color(_color) { }
+  facet();
+  facet(int _id, const vect3f& _color, const vect3f& _normal=vect3f(0.0, 0.0, 1.0));
 };
 
 struct index2d {
@@ -47,6 +45,7 @@ class model3d {
     std::vector<vect3f> _coordinates;
     std::vector<std::vector<facet>> _facet_data;
     int _vertex_count;
+    bool _need_normals;
 
     std::vector<model3d> _sub_models;
 
@@ -58,6 +57,7 @@ class model3d {
     void _initialize();
     int _get_facet_id(const vect3f& point) const;
     template <typename T> bool _in_bounds(const int* const indices, const std::vector<std::vector<T>>& vect) const;
+    void _calculate_normals() const;
 
   public:
     model3d();
@@ -74,7 +74,7 @@ class model3d {
     void set_draw_mode(GLenum);
     void set_vertex_color(int* vertex_id, const vect3f& color);
     vect3f get_vertex_color(int* vertex_id) const;
-    index2d add_vertex(const vect3f& point, const vect3f& color=DEFAULT_COLOR);
+    index2d add_vertex(const vect3f& point, const vect3f& color=DEFAULT_COLOR, const vect3f* const normal=0);
     void remove_vertex(const index2d& vertex_id); // int vertex_id[2] (indexing into a two-dimensional array)
     void push_face();
     void pop_face();

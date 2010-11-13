@@ -10,7 +10,9 @@ class cube {
   private:
     vect3f _bottom_left;
     float _width;
-    vect3f _color, _highlight_color;
+    vect3f _color;
+    vect3f _highlight_color;
+    float _translucency;
     mutable bool _solid;
 
     enum FACE {
@@ -21,6 +23,7 @@ class cube {
         vect3f bottom_left, bottom_right, top_right, top_left;
         mutable bool solid;
         vect3f highlight_color;
+        float translucency;
         FACE face;
 
         side() : solid(false) { }
@@ -38,7 +41,7 @@ class cube {
     void set_pos(const vect3f& p);
     void initialize(const vect3f p, float w);
     void set_color(const vect3f& c);
-    void set_highlight(const vect3f& c);
+    void set_highlight(const vect3f& c, float t=0.1f);
     bool contains_point(const vect3f& point) const;
 
     void draw(const vect3f* const pointer_pos=0) const;

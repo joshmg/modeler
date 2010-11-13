@@ -17,7 +17,8 @@
 #include "cube.h"
 using namespace std;
 
-int mod(int a, int b) { return a%b < 0 ? a%b+b : a%b; }
+
+//#define USE_GL_COLOR_MATERIAL
 
 // openGL function declarations
 void init_opengl();    // sets openGL settings
@@ -30,6 +31,10 @@ void set_camera();
 void draw_pointer(); // draws the cursor
 void draw_axis();
 void draw_color_palette();
+void init_lighting();
+void set_light_pos();
+void set_ambient();
+void draw_light();
 
 void quit_branch(void*); // for multithreading
 void save_branch(void*); // for multithreading
@@ -38,12 +43,10 @@ void define_grid_branch(void*); // for multithreading
 void merge_model_branch(void*); // for multithreading
 
 // misc utility functions
-//int get_index(const vect3f&, const vector<vect3f>&); // returns the index where the point is found within the vector. -1 if not found.
 template <typename T> bool in_bounds(const int* const, const vector<vector<T>>&); // true if int vertices[2] is a valid index within the 2d vector
-//vector<vector<vect3f>> model_to_point_list(const model3d&, vector<vector<vect3f>>&, int*);
-//model3d point_list_to_model(const vector<vector<vect3f>>&, const vector<vector<vect3f>>&);
 void edit_model(int); // switches a loaded model buffer with active editing buffer
 void define_cube(); // defines the grid lines using UNIT_SIZE and CUBE_COUNT
+bool prompt_save();
 
 // globals
 int   SCREEN_W = 800,    SCREEN_H = 600;
@@ -58,16 +61,9 @@ vect3f HIGHLIGHTED_COLOR(1.0f, 1.0f, 1.0f);
 bool DRAW_POLYGON_MODE = false; // if false glBegin(GL_LINES) is used, true = glBegin(GL_POLYGON)
 bool HIGHLIGHT = true; // toggles the highlight of the working unit cube
 
-//vector<vector<vect3f>> MODEL_POINTS, MODEL_COLORS; // the 2d vector containing all (including duplicate) points
-                                                   // 1st level vector is a particular face of the model (ie: when 'p' is pressed)
-                                                   // 2nd level vector is the list of points for that face
-                                                   // note that these are points, not facet lists
-
 model3d WORKING_MODEL; // the model currently being edited
 
 bool DISPLAY_WORKING_MODEL = true; // if false, the edited model buffer is not displayed.
-//int MODEL_POINTS_SIZE = 0; // the number of points within MODEL_POINTS and MODEL_COLORS
-                           // note that it is not particularly used for anything but maintained
 
 vector<model3d> LOADED_MODELS; // the loaded models (accessed via load/save) (display toggled via 1-9) (edited via F1-F9)
 bool DRAW_MODELS[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0}; // used to toggled the display of loaded/saved models
@@ -80,7 +76,6 @@ float PALETTE_MOUSE_CTRL[2]; // the left x value and width of the area which con
                              //   (since that location is calculated dynamically depending on window size)
 
 vect3f SELECTED_COLOR(1.0f, 0.0, 0.0); // the last selected color from the palette
-//vect3f DEFAULT_COLOR(1.0f, 0.0, 1.0f); // fuchsia (used when a vertex color cannot be located (hopefully never))
 vect3f* COLOR_MAP = new vect3f[WORLD_W]; // the color map used to map the palette coords to the particular color
 
 bool ALREADY_BRANCHED = false; // only one branching operation at a time (don't want to be loading and saving at the same time...)
@@ -88,14 +83,21 @@ bool ALREADY_BRANCHED = false; // only one branching operation at a time (don't 
 bool DRAW_AXIS = true;
 bool DRAW_GRID = true; // toggles drawing the grid lines (the cubes)
 
+bool UNSAVED_BUFFER = false;
 
+bool LIGHTS_ON = false;
+bool SET_LIGHT_POS = false;
+glvect4f LIGHT0_POS;
+glvect4f LIGHT_AMBIENT(0.2, 0.2, 0.2, 1.0);
 
 
 void init_opengl() {
   glClearColor(0.0, 0.0, 0.0, 1.0);
 
   glEnable(GL_DEPTH_TEST);
-  glEnable(GL_COLOR_MATERIAL);
+  #ifdef USE_GL_COLOR_MATERIAL
+   glEnable(GL_COLOR_MATERIAL);
+  #endif
 
   glEnable(GL_LINE_SMOOTH);
   glEnable(GL_BLEND);
@@ -104,59 +106,58 @@ void init_opengl() {
 
   set_camera();
 
+  if (LIGHTS_ON) init_lighting();
+
   glLineWidth(1.0);
 }
 
-void display() {
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+void init_lighting() {
+  glEnable(GL_LIGHTING);
 
-  set_camera();
+  glLightModeli(GL_LIGHT_MODEL_LOCAL_VIEWER, GL_TRUE);
 
-  if (DRAW_AXIS) draw_axis();
-  draw_pointer();
+  glLightfv(GL_LIGHT0, GL_AMBIENT, glvect4f(0.0, 0.0, 0.0, 1.0));
+  glLightfv(GL_LIGHT0, GL_DIFFUSE, glvect4f(1.0, 1.0, 1.0, 1.0));
+}
 
-  glLineWidth(2.0);
-  
-  // draw edit model buffer
-  if (DISPLAY_WORKING_MODEL) {
-    GLenum restore_gl_draw_mode = WORKING_MODEL.get_draw_mode();
-    if (DRAW_POLYGON_MODE) WORKING_MODEL.set_draw_mode(GL_LINE_LOOP); // if drawing wireframe mode, change draw mode appropriately
+void set_ambient() {
+  // *** NOTE: USE GL_LIGHT_MODEL_AMBIENT, NOT GL_AMBIENT ***
+  glLightModelfv(GL_LIGHT_MODEL_AMBIENT, LIGHT_AMBIENT);
+}
 
-    if (in_bounds(SELECTED, *(WORKING_MODEL.get_facet_data_ptr()))) {
-      // if SELECTED is valid, change the color of the selected vertex to the highlighted color and then draw, restoring original color afterwards
-      vect3f restore_color = WORKING_MODEL.get_vertex_color(SELECTED);
-      WORKING_MODEL.set_vertex_color(SELECTED, HIGHLIGHTED_COLOR);
-      WORKING_MODEL.draw();
-      WORKING_MODEL.set_vertex_color(SELECTED, restore_color);
-    }
-    else WORKING_MODEL.draw();
-    if (DRAW_POLYGON_MODE) WORKING_MODEL.set_draw_mode(restore_gl_draw_mode); // restore old draw mode if it was modified...
-  }
+void set_light_pos() {
+  glLightfv(GL_LIGHT0, GL_POSITION, LIGHT0_POS);
+}
 
-  // draw loaded models
-  for (int i=0;i<LOADED_MODELS.size();i++) {
-    if (DRAW_MODELS[i]) {
-      GLenum old_draw_mode = LOADED_MODELS[i].get_draw_mode();
-      if (DRAW_POLYGON_MODE) LOADED_MODELS[i].set_draw_mode(GL_LINE_LOOP);
-      //else LOADED_MODELS[i].set_draw_mode(GL_POLYGON);
-      LOADED_MODELS[i].draw();
-      LOADED_MODELS[i].set_draw_mode(old_draw_mode);
-    }
-  }
-  glLineWidth(1.0);
+void draw_light() {
+  cube light;
+  light.initialize(vect3f(LIGHT0_POS.x-0.1, LIGHT0_POS.y-0.1, LIGHT0_POS.z-0.1), 0.2);
+  light.set_solid(true);
+  light.set_color(vect3f(1, 1, 1));
+  light.set_highlight(vect3f(1, 1, 1), 1);
 
-  // draw grid lines
-  if (DRAW_GRID) {
-    glColor3f(0.0f, 0.3f, 0.0f);
-    for (int i=0;i<RUBIX.size();i++) {
-      if (HIGHLIGHT) RUBIX[i].draw(&POINTER);
-      else RUBIX[i].draw();
-    }
-  }
+  glMaterialfv(GL_FRONT, GL_EMISSION, glvect4f(0.4, 0.4, 0.4, 1.0)); // turn on emmissive material
+  light.draw();
+  glMaterialfv(GL_FRONT, GL_EMISSION, glvect4f(0.0, 0.0, 0.0, 1.0)); // turn off emmissive material
+}
 
-  draw_color_palette();
+void refresh() {
+  glutPostRedisplay();
+}
 
-  glutSwapBuffers();
+void set_camera() {
+
+  // set projection matrix
+  glMatrixMode(GL_PROJECTION);
+  glLoadIdentity();
+
+  glViewport(0, 0, SCREEN_W, SCREEN_H);
+
+  gluPerspective( VIEW_ANGLE,                  // view angle
+                  ((float)SCREEN_W)/SCREEN_H,  // aspect ratio
+                  1.0, 100.0);                 // near/far clipping planes
+
+  glMatrixMode(GL_MODELVIEW);
 }
 
 void window_resize(int w, int h) {
@@ -192,7 +193,10 @@ void mouse_callback(int btn, int state, int x, int y) {
       else { // clicked a color
         SELECTED_COLOR = COLOR_MAP[x];
         //if (in_bounds(SELECTED, MODEL_POINTS)) MODEL_COLORS[SELECTED[0]][SELECTED[1]] = SELECTED_COLOR;
-        if (in_bounds(SELECTED, (*(WORKING_MODEL.get_facet_data_ptr())))) WORKING_MODEL.set_vertex_color(SELECTED, SELECTED_COLOR);
+        if (in_bounds(SELECTED, (*(WORKING_MODEL.get_facet_data_ptr())))) {
+          WORKING_MODEL.set_vertex_color(SELECTED, SELECTED_COLOR);
+          UNSAVED_BUFFER = true;
+        }
       }
     }
   }
@@ -253,54 +257,66 @@ void keyboard_callback(unsigned char key, int x, int y) {
 
   switch(key) {
     case 'w': {
-      POINTER.y += UNIT_SIZE/10.0f;
+      if (SET_LIGHT_POS) LIGHT0_POS.y += UNIT_SIZE/10.0f;
+      else POINTER.y += UNIT_SIZE/10.0f;
     } break;
     case 'a': {
-      POINTER.x -= UNIT_SIZE/10.0f;
+      if (SET_LIGHT_POS) LIGHT0_POS.x -= UNIT_SIZE/10.0f;
+      else POINTER.x -= UNIT_SIZE/10.0f;
     } break;
     case 's': {
-      POINTER.y -= UNIT_SIZE/10.0f;
+      if (SET_LIGHT_POS) LIGHT0_POS.y -= UNIT_SIZE/10.0f;
+      else POINTER.y -= UNIT_SIZE/10.0f;
     } break;
     case 'd': {
-      POINTER.x += UNIT_SIZE/10.0f;
+      if (SET_LIGHT_POS) LIGHT0_POS.x += UNIT_SIZE/10.0f;
+      else POINTER.x += UNIT_SIZE/10.0f;
     } break;
     case 'W': {
-      POINTER.z -= UNIT_SIZE/10.0f;
+      if (SET_LIGHT_POS) LIGHT0_POS.z -= UNIT_SIZE/10.0f;
+      else POINTER.z -= UNIT_SIZE/10.0f;
     } break;
     case 'S': {
-      POINTER.z += UNIT_SIZE/10.0f;
+      if (SET_LIGHT_POS) LIGHT0_POS.z += UNIT_SIZE/10.0f;
+      else POINTER.z += UNIT_SIZE/10.0f;
     } break;
     case 8: { // backspace
       glMatrixMode(GL_MODELVIEW);
       glLoadIdentity();
       glTranslatef(0.0, 0.0, -UNIT_SIZE*(CUBE_COUNT+2));
-      POINTER = vect3f();
+      POINTER.clear();
+      LIGHT0_POS = glvect4f(UNIT_SIZE*(1), UNIT_SIZE*(1), UNIT_SIZE*(1), 1.0);
     } break;
 
     case 'c': {
       if (in_bounds(SELECTED, (*(WORKING_MODEL.get_facet_data_ptr())))) {
         WORKING_MODEL.remove_vertex(SELECTED);
+        UNSAVED_BUFFER = true;
       }
       SELECTED.clear();
     } break;
     case 'C': {
       WORKING_MODEL.clear();
       SELECTED.clear();
+      UNSAVED_BUFFER = false;
     } break;
     case 'f': {
       const vector<vect3f>* const model_coordinates = WORKING_MODEL.get_coordinates_ptr();
       const vector<vector<facet>>* const model_facets = WORKING_MODEL.get_facet_data_ptr();
       if (in_bounds(SELECTED, *model_facets)) {
         WORKING_MODEL.add_vertex((*model_coordinates)[((*model_facets)[SELECTED[0]][SELECTED[1]]).id], SELECTED_COLOR);
+        UNSAVED_BUFFER = true;
       }
     } break;
 
     case 'p': {
       WORKING_MODEL.push_face();
       SELECTED.clear();
+      UNSAVED_BUFFER = true;
     } break;
     case 'P': {
       WORKING_MODEL.pop_face();
+      UNSAVED_BUFFER = true;
     } break;
     case 'o': {
       DISPLAY_WORKING_MODEL = !DISPLAY_WORKING_MODEL; // hides the model
@@ -320,6 +336,7 @@ void keyboard_callback(unsigned char key, int x, int y) {
 
     case 32: { // space key
       WORKING_MODEL.add_vertex(POINTER, SELECTED_COLOR);
+      UNSAVED_BUFFER = true;
     } break;
     case 9: { // tab key
       const vector<vector<facet>>* const facet_data = WORKING_MODEL.get_facet_data_ptr();
@@ -414,7 +431,22 @@ void keyboard_callback(unsigned char key, int x, int y) {
       if (!ALREADY_BRANCHED) _beginthread(&merge_model_branch, 0, (void*)0);
     } break;
 
-    case 27: {
+    case 't': {
+      LIGHTS_ON = !LIGHTS_ON;
+      if (LIGHTS_ON) {
+        glEnable(GL_LIGHTING);
+        glEnable(GL_LIGHT0);
+      }
+      else {
+        glDisable(GL_LIGHTING);
+        glDisable(GL_LIGHT0);
+      }
+    } break;
+    case 'T': {
+      SET_LIGHT_POS = !SET_LIGHT_POS;
+    } break;
+
+    case 27: { // escape key
       SELECTED.clear();
     } break;
     default: {} break;
@@ -423,23 +455,67 @@ void keyboard_callback(unsigned char key, int x, int y) {
   refresh();
 }
 
-void refresh() {
-  glutPostRedisplay();
-}
+void display() {
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-void set_camera() {
+  if (LIGHTS_ON) {
+    set_ambient();
+    set_light_pos();
+  }
+  set_camera();
+  if (LIGHTS_ON) draw_light();
 
-  // set projection matrix
-  glMatrixMode(GL_PROJECTION);
-  glLoadIdentity();
+  glDisable(GL_LIGHTING);
+  if (DRAW_AXIS) draw_axis();
+  draw_pointer();
+  if (LIGHTS_ON) glEnable(GL_LIGHTING);
 
-  glViewport(0, 0, SCREEN_W, SCREEN_H);
+  glLineWidth(2.0);
 
-  gluPerspective( VIEW_ANGLE,                  // view angle
-                  ((float)SCREEN_W)/SCREEN_H,  // aspect ratio
-                  1.0, 100.0);                 // near/far clipping planes
+  //if (LIGHTS_ON) glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, glvect4f(1.0, 1.0, 1.0, 1.0));
 
-  glMatrixMode(GL_MODELVIEW);
+  // draw edit model buffer
+  if (DISPLAY_WORKING_MODEL) {
+    GLenum restore_gl_draw_mode = WORKING_MODEL.get_draw_mode();
+    if (DRAW_POLYGON_MODE) WORKING_MODEL.set_draw_mode(GL_LINE_LOOP); // if drawing wireframe mode, change draw mode appropriately
+
+    if (in_bounds(SELECTED, *(WORKING_MODEL.get_facet_data_ptr()))) {
+      // if SELECTED is valid, change the color of the selected vertex to the highlighted color and then draw, restoring original color afterwards
+      vect3f restore_color = WORKING_MODEL.get_vertex_color(SELECTED);
+      WORKING_MODEL.set_vertex_color(SELECTED, HIGHLIGHTED_COLOR);
+      WORKING_MODEL.draw();
+      WORKING_MODEL.set_vertex_color(SELECTED, restore_color);
+    }
+    else WORKING_MODEL.draw();
+    if (DRAW_POLYGON_MODE) WORKING_MODEL.set_draw_mode(restore_gl_draw_mode); // restore old draw mode if it was modified...
+  }
+
+  // draw loaded models
+  for (int i=0;i<LOADED_MODELS.size();i++) {
+    if (DRAW_MODELS[i]) {
+      GLenum old_draw_mode = LOADED_MODELS[i].get_draw_mode();
+      if (DRAW_POLYGON_MODE) LOADED_MODELS[i].set_draw_mode(GL_LINE_LOOP);
+      LOADED_MODELS[i].draw();
+      LOADED_MODELS[i].set_draw_mode(old_draw_mode);
+    }
+  }
+  glLineWidth(1.0);
+
+  glDisable(GL_LIGHTING);
+  // draw grid lines
+  if (DRAW_GRID) {
+    glColor3f(0.0f, 0.3f, 0.0f);
+    for (int i=0;i<RUBIX.size();i++) {
+      if (HIGHLIGHT) RUBIX[i].draw(&POINTER);
+      else RUBIX[i].draw();
+    }
+  }
+  
+  // draw palette
+  draw_color_palette();
+  if (LIGHTS_ON) glEnable(GL_LIGHTING);
+
+  glutSwapBuffers();
 }
 
 void draw_axis() {
@@ -534,7 +610,7 @@ int main(int argc, char** argv) {
        << "    'W' and 'S' move the cursor forward and backwards in the Z-Direction." << endl
        << "  CTRL-[arrow-keys] rotate the world. (Up/Down->X-Axis, Left/Right->Y-Axis)." << endl
        << "  ALT-[arrow-keys] rotate the world along the Z-axis (only Left/Right)." << endl
-       << "  [arrow-keys] move the scene along the axis." << endl
+       << "  [arrow-keys] move the scene along the respective axis." << endl
        << "    (Left/Right->X-axis), (Up/Down->Y-axis), (Shift-Up/Shift-Down->Z-axis)" << endl
        << "  'h' toggles unit square highlighting." << endl
        << "  The space-bar creates a point at the current cursor location." << endl
@@ -561,12 +637,16 @@ int main(int argc, char** argv) {
        << "      - additional vertices are drawn in the most recently selected color." << endl
        << "  The + or - buttons on the palette change its alpha and gamma levels." << endl
        << "  'q' exits the program." << endl
+       << "  't' toggles lighting." << endl
+       << "  'T' toggles control of the cursor position or the light source position." << endl
        << endl;
 
   UNIT_SIZE = 1.0f;
-  CUBE_COUNT = 9;
+  CUBE_COUNT = 5;
 
   define_cube();
+
+  LIGHT0_POS = glvect4f(UNIT_SIZE*(1), UNIT_SIZE*(1), UNIT_SIZE*(1), 1.0);
 
   for (int i=0;i<9;i++) LOADED_MODELS.push_back(model3d());
 
@@ -682,12 +762,27 @@ void draw_color_palette() {
 
 void edit_model(int id) {
   if (id < LOADED_MODELS.size()) {
-    model3d temp_model(LOADED_MODELS[id]);
-    LOADED_MODELS[id] = WORKING_MODEL;
-    WORKING_MODEL = temp_model;
+    bool confirmed = true;
+    if (UNSAVED_BUFFER) confirmed = prompt_save();
+    if (confirmed) {
+      model3d temp_model(LOADED_MODELS[id]);
+      LOADED_MODELS[id] = WORKING_MODEL;
+      WORKING_MODEL = temp_model;
 
-    DRAW_MODELS[id] = false;
+      DRAW_MODELS[id] = false;
+    }
   }
+}
+
+bool prompt_save() {
+  cout << "There are unsaved changes to the current model. " << endl << " Continue without saving? (yes/no) ";
+  string input;
+  getline(cin, input);
+  if (input[0] == 'y' || input[0] == 'Y') {
+    UNSAVED_BUFFER = false;
+    return true;
+  }
+  return false;
 }
 
 void define_cube() {
@@ -726,6 +821,8 @@ void save_branch(void*) {
 
   glutShowWindow();
 
+  UNSAVED_BUFFER = false;
+
   ALREADY_BRANCHED = false;
 }
 
@@ -734,21 +831,26 @@ void load_branch(void*) {
 
   glutIconifyWindow();
 
-  string filename;
+  bool confirmed = true;
+  if (UNSAVED_BUFFER) confirmed = prompt_save();
 
-  cout << "[LOAD] Enter filename: ";
-  getline(cin, filename);
+  if (confirmed) {
+    string filename;
 
-  model3d loaded_model;
+    cout << "[LOAD] Enter filename: ";
+    getline(cin, filename);
 
-  // add a check to see if current model is saved...
+    model3d loaded_model;
 
-  if (WORKING_MODEL.load(filename)) {
-    cout << "Loaded model. (file: " << filename << ")" << endl;
+    // add a check to see if current model is saved...
+
+    if (WORKING_MODEL.load(filename)) {
+      cout << "Loaded model. (file: " << filename << ")" << endl;
+    }
+    else cout << "Error loading model. (file: " << filename << ")" << endl;
+
+    refresh();
   }
-  else cout << "Error loading model. (file: " << filename << ")" << endl;
-
-  refresh();
 
   glutShowWindow();
 
@@ -787,7 +889,12 @@ void quit_branch(void*) {
   cout << "Are you sure you want to quit? (y/n) ";
   string input;
   getline(cin, input);
-  if (input[0] == 'y' || input[0] == 'Y') exit(0); // quit the program
+  if (input[0] == 'y' || input[0] == 'Y') {
+    bool confirmed = true;
+    if (UNSAVED_BUFFER) confirmed = prompt_save();
+
+    if (confirmed) exit(0); // quit the program
+  }
 
   glutShowWindow();
 
@@ -799,25 +906,30 @@ void merge_model_branch(void*) {
 
   glutIconifyWindow();
 
-  cout << "Merge current edited model with which model number? ";
-  string input;
-  getline(cin, input);
+  bool confirmed = true;
+  if (UNSAVED_BUFFER) confirmed = prompt_save();
 
-  int model_id = atoi(input.c_str())-1;
+  if (confirmed) {
+    cout << "Merge current edited model with which model number? ";
+    string input;
+    getline(cin, input);
 
-  if (model_id < LOADED_MODELS.size() && model_id > -1) {
-    cout << "Merging...";
-    const vector<vect3f>* const coordinate_data = LOADED_MODELS[model_id].get_coordinates_ptr();
-    const vector<vector<facet>>* const facet_data = LOADED_MODELS[model_id].get_facet_data_ptr();
-    for (int i=0;i<facet_data->size();i++) {
-      WORKING_MODEL.push_face();
-      for (int j=0;j<(*facet_data)[i].size();j++) {
-        WORKING_MODEL.add_vertex((*coordinate_data)[(*facet_data)[i][j].id], (*facet_data)[i][j].color);
+    int model_id = atoi(input.c_str())-1;
+
+    if (model_id < LOADED_MODELS.size() && model_id > -1) {
+      cout << "Merging...";
+      const vector<vect3f>* const coordinate_data = LOADED_MODELS[model_id].get_coordinates_ptr();
+      const vector<vector<facet>>* const facet_data = LOADED_MODELS[model_id].get_facet_data_ptr();
+      for (int i=0;i<facet_data->size();i++) {
+        WORKING_MODEL.push_face();
+        for (int j=0;j<(*facet_data)[i].size();j++) {
+          WORKING_MODEL.add_vertex((*coordinate_data)[(*facet_data)[i][j].id], (*facet_data)[i][j].color);
+        }
       }
+      cout << " done." << endl;
     }
-    cout << " done." << endl;
+    else cout << "Invalid model number." << endl;
   }
-  else cout << "Invalid model number." << endl;
 
   glutShowWindow();
 
