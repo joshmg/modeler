@@ -19,6 +19,7 @@ using namespace std;
 
 
 //#define USE_GL_COLOR_MATERIAL
+#define USE_SPECULAR
 
 // openGL function declarations
 void init_opengl();    // sets openGL settings
@@ -41,6 +42,7 @@ void save_branch(void*); // for multithreading
 void load_branch(void*); // for multithreading
 void define_grid_branch(void*); // for multithreading
 void merge_model_branch(void*); // for multithreading
+void face_resolution_branch (void*); // for multithreading
 
 // misc utility functions
 template <typename T> bool in_bounds(const int* const, const vector<vector<T>>&); // true if int vertices[2] is a valid index within the 2d vector
@@ -118,6 +120,9 @@ void init_lighting() {
 
   glLightfv(GL_LIGHT0, GL_AMBIENT, glvect4f(0.0, 0.0, 0.0, 1.0));
   glLightfv(GL_LIGHT0, GL_DIFFUSE, glvect4f(1.0, 1.0, 1.0, 1.0));
+  #ifdef USE_SPECULAR
+    glLightfv(GL_LIGHT0, GL_SPECULAR, glvect4f(1.0, 1.0, 1.0, 1.0));
+  #endif
 }
 
 void set_ambient() {
@@ -333,6 +338,9 @@ void keyboard_callback(unsigned char key, int x, int y) {
     case 'h': {
       HIGHLIGHT = !HIGHLIGHT;
     } break;
+    case 'r' : {
+      if (!ALREADY_BRANCHED) _beginthread(&face_resolution_branch, 0, (void*)0);
+    }
 
     case 32: { // space key
       WORKING_MODEL.add_vertex(POINTER, SELECTED_COLOR);
@@ -472,7 +480,10 @@ void display() {
 
   glLineWidth(2.0);
 
-  //if (LIGHTS_ON) glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, glvect4f(1.0, 1.0, 1.0, 1.0));
+  #ifdef USE_SPECULAR
+    glMaterialfv(GL_FRONT, GL_SPECULAR, glvect4f(1.0, 1.0, 1.0, 1.0));
+    glMaterialfv(GL_FRONT, GL_SHININESS, glvect4f(50.0, 1.0, 1.0, 1.0));
+  #endif
 
   // draw edit model buffer
   if (DISPLAY_WORKING_MODEL) {
@@ -639,6 +650,7 @@ int main(int argc, char** argv) {
        << "  'q' exits the program." << endl
        << "  't' toggles lighting." << endl
        << "  'T' toggles control of the cursor position or the light source position." << endl
+       << "  'r' sets the current working model's face resolution to a number of polygons." << endl
        << endl;
 
   UNIT_SIZE = 1.0f;
@@ -903,7 +915,6 @@ void quit_branch(void*) {
 
 void merge_model_branch(void*) {
   ALREADY_BRANCHED = true;
-
   glutIconifyWindow();
 
   bool confirmed = true;
@@ -932,6 +943,21 @@ void merge_model_branch(void*) {
   }
 
   glutShowWindow();
+  ALREADY_BRANCHED = false;
+}
 
+void face_resolution_branch(void*) {
+  ALREADY_BRANCHED = true;
+  glutIconifyWindow();
+
+  cout << "Set current face (size: " << (*(WORKING_MODEL.get_facet_data_ptr())).back().size() << ") to how many polygons? ";
+  string input;
+  getline(cin, input);
+
+  cout << "Building face...";
+  WORKING_MODEL.face_resolution(atoi(input.c_str()));
+  cout << " done." << endl;
+
+  glutShowWindow();
   ALREADY_BRANCHED = false;
 }

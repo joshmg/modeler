@@ -79,6 +79,8 @@ class model3d {
     void push_face();
     void pop_face();
 
+    void face_resolution(int polygon_count);
+
     int vertex_count() const;
 
     void save(std::string& filename=std::string()) const; // produces filename if filename has zero length to the saved file name

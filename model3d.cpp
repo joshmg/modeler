@@ -336,7 +336,7 @@ void model3d::draw() const {
       glColor3f((*c).x, (*c).y, (*c).z);
 
       #ifndef USE_GL_COLOR_MATERIAL
-        glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, glvect4f(1, (*c).y, (*c).z, 1.0));
+        glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, glvect4f((*c).x, (*c).y, (*c).z, 1.0));
       #endif
       
       glNormal3f(_facet_data[i][j].normal.x, _facet_data[i][j].normal.y, _facet_data[i][j].normal.z);
@@ -357,6 +357,41 @@ void model3d::draw() const {
   for (int i=0;i<_sub_models.size();i++) _sub_models[i].draw(); // draw sub_models
 
   glPopMatrix();
+}
+
+void model3d::face_resolution(int polygon_count) {
+  if (_facet_data.back().size() < 3 || polygon_count < 2) return;
+
+  vector<facet> face_facets = _facet_data.back();
+  vector<vect3f> face_points;
+  
+  for (int i=0;i<face_facets.size();i++) face_points.push_back(_coordinates[face_facets[i].id]);
+
+  _facet_data.back().clear();
+
+  vect3f* anchor_point = &face_points[0];
+  facet* anchor_facet = &face_facets[0];
+
+  for (int i=2;i<face_points.size();i++) {
+    vect3f* wall_point = &face_points[i-1];
+    facet* wall_facet = &face_facets[i-1];
+    vect3f step = (face_points[i]-(*wall_point))/(float)polygon_count;
+    vect3f color_step = (face_facets[i].color-(*wall_facet).color)/(float)polygon_count;
+
+    if (*wall_point == *anchor_point || (*wall_point)+(step*polygon_count) == *anchor_point) {
+      (*wall_point) += step*polygon_count;
+      continue;
+    }
+
+    for (int j=0;j<polygon_count;j++) {
+      push_face();
+      add_vertex(*anchor_point, (*anchor_facet).color);
+      add_vertex(*wall_point, (*wall_facet).color);
+      (*wall_point) += step;
+      (*wall_facet).color += color_step;
+      add_vertex(*wall_point, (*wall_facet).color);
+    }
+  }
 }
 
 
