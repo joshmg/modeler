@@ -59,11 +59,21 @@ class model3d {
     template <typename T> bool _in_bounds(const int* const indices, const std::vector<std::vector<T>>& vect) const;
     void _calculate_normals() const;
 
+    bool _use_draw_funcs;
+    void (*_pre_draw)(const model3d&);
+    void (*_post_draw)(const model3d&);
+
   public:
+    bool set_material;
+    vect4f diffuse, specular, shine;
+
     model3d();
     model3d(const std::vector<vect3f>& coordinates, const std::vector<std::vector<facet>>& facets);
 
     void clear();
+
+    void enable_draw_funcs(void (*pre)(const model3d&), void (*post)(const model3d&));
+    void disable_draw_funcs();
 
     std::vector<vect3f> get_coordinates() const;
     const std::vector<vect3f>* const get_coordinates_ptr() const;
@@ -72,12 +82,16 @@ class model3d {
     GLenum get_draw_mode() const;
 
     void set_draw_mode(GLenum);
-    void set_vertex_color(int* vertex_id, const vect3f& color);
-    vect3f get_vertex_color(int* vertex_id) const;
+    void set_vertex_color(const int* const vertex_id, const vect3f& color);
+    vect3f get_vertex_color(const int* const vertex_id) const;
     index2d add_vertex(const vect3f& point, const vect3f& color=DEFAULT_COLOR, const vect3f* const normal=0);
-    void remove_vertex(const index2d& vertex_id); // int vertex_id[2] (indexing into a two-dimensional array)
+    void edit_coord(int coord_id, const vect3f& point);
+    void edit_vertex(const int* const vertex_id, const facet& vertex);
+    void remove_vertex(const int* const vertex_id); // int vertex_id[2] (indexing into a two-dimensional array)
     void push_face();
     void pop_face();
+
+    void recalculate_normals() const;
 
     void face_resolution(int polygon_count);
 
@@ -87,6 +101,7 @@ class model3d {
     bool load(const std::string& filename);
 
     void set_pos(const vect3f& pos);
+    vect3f get_pos() const;
     void add_submodel(const model3d& child);
 
     void anchor(bool t=true);

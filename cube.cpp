@@ -149,7 +149,7 @@ void cube::side::draw() const {
     glColor4f(highlight_color.x, highlight_color.y, highlight_color.z, translucency);
 
     #ifndef USE_GL_COLOR_MATERIAL
-      glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, glvect4f(highlight_color.x, highlight_color.y, highlight_color.z, translucency));
+      glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, vect4f(highlight_color.x, highlight_color.y, highlight_color.z, translucency));
     #endif
 
   }

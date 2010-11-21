@@ -42,7 +42,9 @@ void save_branch(void*); // for multithreading
 void load_branch(void*); // for multithreading
 void define_grid_branch(void*); // for multithreading
 void merge_model_branch(void*); // for multithreading
-void face_resolution_branch (void*); // for multithreading
+void face_resolution_branch(void*); // for multithreading
+void translate_model_branch(void*); // for multithreading
+void transform_model_branch(void*); // for multithreading
 
 // misc utility functions
 template <typename T> bool in_bounds(const int* const, const vector<vector<T>>&); // true if int vertices[2] is a valid index within the 2d vector
@@ -89,8 +91,8 @@ bool UNSAVED_BUFFER = false;
 
 bool LIGHTS_ON = false;
 bool SET_LIGHT_POS = false;
-glvect4f LIGHT0_POS;
-glvect4f LIGHT_AMBIENT(0.2, 0.2, 0.2, 1.0);
+vect4f LIGHT0_POS;
+vect4f LIGHT_AMBIENT(0.2, 0.2, 0.2, 1.0);
 
 
 void init_opengl() {
@@ -118,10 +120,10 @@ void init_lighting() {
 
   glLightModeli(GL_LIGHT_MODEL_LOCAL_VIEWER, GL_TRUE);
 
-  glLightfv(GL_LIGHT0, GL_AMBIENT, glvect4f(0.0, 0.0, 0.0, 1.0));
-  glLightfv(GL_LIGHT0, GL_DIFFUSE, glvect4f(1.0, 1.0, 1.0, 1.0));
+  glLightfv(GL_LIGHT0, GL_AMBIENT, vect4f(0.0, 0.0, 0.0, 1.0));
+  glLightfv(GL_LIGHT0, GL_DIFFUSE, vect4f(1.0, 1.0, 1.0, 1.0));
   #ifdef USE_SPECULAR
-    glLightfv(GL_LIGHT0, GL_SPECULAR, glvect4f(1.0, 1.0, 1.0, 1.0));
+    glLightfv(GL_LIGHT0, GL_SPECULAR, vect4f(1.0, 1.0, 1.0, 1.0));
   #endif
 }
 
@@ -141,9 +143,9 @@ void draw_light() {
   light.set_color(vect3f(1, 1, 1));
   light.set_highlight(vect3f(1, 1, 1), 1);
 
-  glMaterialfv(GL_FRONT, GL_EMISSION, glvect4f(0.4, 0.4, 0.4, 1.0)); // turn on emmissive material
+  glMaterialfv(GL_FRONT, GL_EMISSION, vect4f(0.4, 0.4, 0.4, 1.0)); // turn on emmissive material
   light.draw();
-  glMaterialfv(GL_FRONT, GL_EMISSION, glvect4f(0.0, 0.0, 0.0, 1.0)); // turn off emmissive material
+  glMaterialfv(GL_FRONT, GL_EMISSION, vect4f(0.0, 0.0, 0.0, 1.0)); // turn off emmissive material
 }
 
 void refresh() {
@@ -290,7 +292,7 @@ void keyboard_callback(unsigned char key, int x, int y) {
       glLoadIdentity();
       glTranslatef(0.0, 0.0, -UNIT_SIZE*(CUBE_COUNT+2));
       POINTER.clear();
-      LIGHT0_POS = glvect4f(UNIT_SIZE*(1), UNIT_SIZE*(1), UNIT_SIZE*(1), 1.0);
+      LIGHT0_POS = vect4f(UNIT_SIZE*(1), UNIT_SIZE*(1), UNIT_SIZE*(1), 1.0);
     } break;
 
     case 'c': {
@@ -453,6 +455,12 @@ void keyboard_callback(unsigned char key, int x, int y) {
     case 'T': {
       SET_LIGHT_POS = !SET_LIGHT_POS;
     } break;
+    case '>': {
+      if (!ALREADY_BRANCHED) _beginthread(&translate_model_branch, 0, (void*)0);
+    } break;
+    case '<': {
+      if (!ALREADY_BRANCHED) _beginthread(&transform_model_branch, 0, (void*)0);
+    } break;
 
     case 27: { // escape key
       SELECTED.clear();
@@ -481,8 +489,8 @@ void display() {
   glLineWidth(2.0);
 
   #ifdef USE_SPECULAR
-    glMaterialfv(GL_FRONT, GL_SPECULAR, glvect4f(1.0, 1.0, 1.0, 1.0));
-    glMaterialfv(GL_FRONT, GL_SHININESS, glvect4f(50.0, 1.0, 1.0, 1.0));
+    glMaterialfv(GL_FRONT, GL_SPECULAR, vect4f(1.0, 1.0, 1.0, 1.0));
+    glMaterialfv(GL_FRONT, GL_SHININESS, vect4f(50.0, 1.0, 1.0, 1.0));
   #endif
 
   // draw edit model buffer
@@ -658,7 +666,7 @@ int main(int argc, char** argv) {
 
   define_cube();
 
-  LIGHT0_POS = glvect4f(UNIT_SIZE*(1), UNIT_SIZE*(1), UNIT_SIZE*(1), 1.0);
+  LIGHT0_POS = vect4f(UNIT_SIZE*(1), UNIT_SIZE*(1), UNIT_SIZE*(1), 1.0);
 
   for (int i=0;i<9;i++) LOADED_MODELS.push_back(model3d());
 
@@ -957,6 +965,100 @@ void face_resolution_branch(void*) {
   cout << "Building face...";
   WORKING_MODEL.face_resolution(atoi(input.c_str()));
   cout << " done." << endl;
+
+  glutShowWindow();
+  ALREADY_BRANCHED = false;
+}
+
+void translate_model_branch(void*) {
+  ALREADY_BRANCHED = true;
+  glutIconifyWindow();
+
+  cout << "Translate Direction: (x/y/z) ";
+  string input;
+  getline(cin, input);
+
+  vect3f direction;
+  if (input[0] == 'x' || input[0] == 'X')      direction.x = 1;
+  else if (input[0] == 'y' || input[0] == 'Y') direction.y = 1;
+  else if (input[0] == 'z' || input[0] == 'Z') direction.z = 1;
+
+  int magnitude;
+  cout << "Magnitude: ";
+  getline(cin, input);
+  magnitude = atoi(input.c_str());
+
+  cout << "Translating model...";
+  const vector<vect3f>* const coords = WORKING_MODEL.get_coordinates_ptr();
+
+  for (int i=0;i<(*coords).size();i++) {
+    WORKING_MODEL.edit_coord(i, (*coords)[i]+direction*magnitude);
+  }
+  cout << " done." << endl;
+
+  UNSAVED_BUFFER = true;
+
+  glutShowWindow();
+  ALREADY_BRANCHED = false;
+}
+
+// polygon faces don't transfer correctly >.<
+void transform_model_branch(void*) {
+  ALREADY_BRANCHED = true;
+  glutIconifyWindow();
+
+  cout << "Transform invert axis: (x/y/z) ";
+  string input;
+  getline(cin, input);
+
+  vect3f direction(1.0, 1.0, 1.0), normal;
+  if (input[0] == 'x' || input[0] == 'X') {
+    direction.x = -1.0;
+    normal.x = 1.0;
+  }
+  else if (input[0] == 'y' || input[0] == 'Y') {
+    direction.y = -1.0;
+    normal.y = 1.0;
+  }
+  else if (input[0] == 'z' || input[0] == 'Z') {
+    direction.z = -1.0;
+    normal.z = 1.0;
+  }
+
+  cout << "Translating model...";
+  const vector<vect3f>* const coords = WORKING_MODEL.get_coordinates_ptr();
+  const vector<vector<facet>>* const facets = WORKING_MODEL.get_facet_data_ptr();
+
+  for (int i=0;i<(*coords).size();i++) {
+    vect3f new_point = (*coords)[i];
+    new_point.x *= direction.x;
+    new_point.y *= direction.y;
+    new_point.z *= direction.z;
+    WORKING_MODEL.edit_coord(i, new_point);
+  }
+
+  for (int i=0;i<(*facets).size();i++) {
+    int face_size = (*facets)[i].size();
+    if (face_size > 0) {
+      vect3f cross(((*facets)[i][0].normal).cross(normal));
+      if (cross.x + cross.y + cross.z == 0) { // the face is facing the switched axis
+        for (int j=0;j<face_size;j++) {
+          facet front_facet = (*facets)[i][j]; // the j'th facet from the front
+          facet back_facet = (*facets)[i][(*facets)[i].size()-j-1]; // the j'th facet from the back
+
+          // swap the order of the facets:
+          WORKING_MODEL.edit_vertex(index2d(i, j), back_facet);
+          WORKING_MODEL.edit_vertex(index2d(i, (*facets)[i].size()-j-1), front_facet);
+
+          face_size--; // only swap the first half
+        }
+      }
+    }
+  }
+  WORKING_MODEL.recalculate_normals();
+  cout << " done." << endl;
+
+  UNSAVED_BUFFER = true;
 
   glutShowWindow();
   ALREADY_BRANCHED = false;

@@ -31,6 +31,11 @@ void model3d::_initialize() {
   _smart_rotate = true;
   _anchored = false;
   _child_animate_flag = true;
+
+  set_material = false;
+  _use_draw_funcs = false;
+  _pre_draw = 0;
+  _post_draw = 0;
 }
 
 // returns the index of the specified point if it exists within _coordinates.
@@ -81,6 +86,17 @@ void model3d::clear() {
   _initialize();
 }
 
+void model3d::enable_draw_funcs(void (*pre)(const model3d&), void (*post)(const model3d&)) {
+  _pre_draw = pre;
+  _post_draw = post;
+  _use_draw_funcs = true;
+}
+void model3d::disable_draw_funcs() {
+  _pre_draw = 0;
+  _post_draw = 0;
+  _use_draw_funcs = false;
+}
+
 vector<vect3f> model3d::get_coordinates() const { return _coordinates; }
 
 const vector<vect3f>* const model3d::get_coordinates_ptr() const { return &_coordinates; }
@@ -94,11 +110,11 @@ GLenum model3d::get_draw_mode() const { return _draw_mode; }
 void model3d::set_draw_mode(GLenum draw_mode) { _draw_mode = draw_mode; }
 
 // sets a specific facet color (facet referenced by two dimensional indices)
-void model3d::set_vertex_color(int* vertex_id, const vect3f& color) {
+void model3d::set_vertex_color(const int* const vertex_id, const vect3f& color) {
   if (_in_bounds(vertex_id, _facet_data)) _facet_data[vertex_id[0]][vertex_id[1]].color = color;
 }
 
-vect3f model3d::get_vertex_color(int* vertex_id) const {
+vect3f model3d::get_vertex_color(const int* const vertex_id) const {
   if (_in_bounds(vertex_id, _facet_data)) return _facet_data[vertex_id[0]][vertex_id[1]].color;
   return DEFAULT_COLOR;
 }
@@ -123,7 +139,19 @@ index2d model3d::add_vertex(const vect3f& point, const vect3f& color, const vect
   return index2d(_facet_data.size()-1, _facet_data.back().size()-1);
 }
 
-void model3d::remove_vertex(const index2d& vertex_id) {
+void model3d::edit_coord(int coord_id, const vect3f& point) {
+  if (coord_id < _coordinates.size()) {
+    _coordinates[coord_id] = point;
+  }
+}
+
+void model3d::edit_vertex(const int* const vertex_id, const facet& vertex) {
+  if (_in_bounds(vertex_id, _facet_data)) {
+    _facet_data[vertex_id[0]][vertex_id[1]] = vertex;
+  }
+}
+
+void model3d::remove_vertex(const int* const vertex_id) {
   if (_in_bounds(vertex_id, _facet_data)) {
     _facet_data[vertex_id[0]].erase(_facet_data[vertex_id[0]].begin()+vertex_id[1]);
   }
@@ -142,6 +170,8 @@ void model3d::pop_face() {
   else if (_facet_data.size() == 1) _facet_data.back().clear();
   _need_normals = false;
 }
+
+void model3d::recalculate_normals() const { _calculate_normals(); }
 
 int model3d::vertex_count() const { return _vertex_count; }
 
@@ -274,6 +304,7 @@ bool model3d::load(const string& filename) {
 }
 
 void model3d::set_pos(const vect3f& pos) { _pos = pos; }
+vect3f model3d::get_pos() const { return _pos; }
 
 void model3d::add_submodel(const model3d& child) { _sub_models.push_back(child); }
 
@@ -314,7 +345,15 @@ void model3d::operator++(int) {
 }
 
 void model3d::draw() const {
+  if (set_material) {
+    glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, diffuse);
+    glMaterialfv(GL_FRONT, GL_SPECULAR, specular);
+    glMaterialfv(GL_FRONT, GL_SHININESS, shine);
+  }
+
   glPushMatrix();
+
+  if (_use_draw_funcs) _pre_draw(*this);
 
   if (!_anchored) {
     glTranslatef(_pos.x, _pos.y, _pos.z);
@@ -336,7 +375,7 @@ void model3d::draw() const {
       glColor3f((*c).x, (*c).y, (*c).z);
 
       #ifndef USE_GL_COLOR_MATERIAL
-        glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, glvect4f((*c).x, (*c).y, (*c).z, 1.0));
+        glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, vect4f((*c).x, (*c).y, (*c).z, 1.0));
       #endif
       
       glNormal3f(_facet_data[i][j].normal.x, _facet_data[i][j].normal.y, _facet_data[i][j].normal.z);
@@ -344,6 +383,8 @@ void model3d::draw() const {
     }
     glEnd();
   }
+
+  if (_use_draw_funcs) _post_draw(*this);
 
   glPopMatrix();
 
